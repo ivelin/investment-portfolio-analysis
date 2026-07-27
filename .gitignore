@@ -1,0 +1,128 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Project-specific generated / data
+schwab-exports/
+*.PDF
+*.pdf
+*.csv
+*.xml
+output/
+reports/
+
+# Local portfolio data, broker tokens, and secrets (never commit)
+.portfolio-analysis/
+**/.portfolio-analysis/
+**/portfolio.db
+**/*.db-journal
+**/*.sqlite
+**/*.sqlite3
+.schwab/
+**/.schwab/
+**/tokens.json
+**/token.json
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+client_secret*.json
+secrets/
+# Unredacted personal export dumps (also covered by *.csv/*.xml/*.pdf above)
+# Never force-add real brokerage/tax exports into tests/fixtures/exports/
+tests/fixtures/exports/**/*.PDF
+tests/fixtures/exports/**/*.pdf
+# Accidental nested home-dir copies inside the worktree
+~/
+
+# Ruff (linter cache - appears when running ruff locally)
+.ruff_cache/
+
+# Generated report artifacts / ad-hoc report outputs
+# Report tools should write to user-writable locations (e.g. ~/.../reports/ or reports/ which is already ignored)
+# or take explicit --output paths outside the source tree. Never commit these.
+coverage_report_*.csv
+*report*.csv
+*report*.txt
+*report*.pdf
+*detailed*twrr*.txt
+twrr_report*.*
+ytd_report*.*
+aapl*report*.*
+weed*report*.*

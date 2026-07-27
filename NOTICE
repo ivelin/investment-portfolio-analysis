@@ -1,0 +1,9 @@
+portfolio-analysis
+Copyright 2025–2026 Ivelin Ivanov
+
+This product includes software developed for personal portfolio analysis
+and open-source distribution under the Apache License, Version 2.0.
+
+This product may include third-party open source software components with
+their own license terms. See project dependencies (pyproject.toml / uv.lock)
+for runtime libraries and their respective licenses.

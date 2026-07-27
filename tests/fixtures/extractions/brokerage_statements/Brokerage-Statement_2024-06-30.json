@@ -1,0 +1,53 @@
+{
+  "extraction_version": "1.0-synthetic",
+  "source_file": "SYNTHETIC-Brokerage-Statement_2024-06-30.PDF",
+  "extracted_by": "synthetic-fixture-generator",
+  "extracted_at": "2026-07-27T00:00:00Z",
+  "statement_metadata": {
+    "account_number": "999-000001",
+    "statement_period_start": "2024-06-01",
+    "statement_period_end": "2024-06-30",
+    "as_of_date": "2024-06-30",
+    "statement_type": "monthly",
+    "source_firm": "Charles Schwab"
+  },
+  "positions": [
+    {
+      "symbol": "AAA",
+      "description": "SYNTHETIC CORP A",
+      "quantity": 12.0,
+      "market_price": 100.0,
+      "market_value": 1200.0,
+      "cost_basis": 1080.0,
+      "avg_cost": 90.0,
+      "unrealized_gain_loss": 120.0
+    },
+    {
+      "symbol": "BBB",
+      "description": "SYNTHETIC CORP B",
+      "quantity": 6.0,
+      "market_price": 50.0,
+      "market_value": 300.0,
+      "cost_basis": 240.0,
+      "avg_cost": 40.0,
+      "unrealized_gain_loss": 60.0
+    },
+    {
+      "symbol": "CCC",
+      "description": "SYNTHETIC ETF C",
+      "quantity": 24.0,
+      "market_price": 25.0,
+      "market_value": 600.0,
+      "cost_basis": 576.0,
+      "avg_cost": 24.0,
+      "unrealized_gain_loss": 24.0
+    }
+  ],
+  "portfolio_summary": {
+    "total_market_value": 2100.0,
+    "total_cost_basis": 1896.0,
+    "total_unrealized_gain_loss": 204.0,
+    "cash_sweep": 100.0
+  },
+  "notes": "SYNTHETIC fixture for offline CI only. Not real account data. Account 999-000001 is a placeholder. Do not commit personal exports."
+}
