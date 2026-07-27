@@ -11,7 +11,7 @@ This project exists to keep a retail investor (the author, and anyone who runs i
 - **Per-symbol capital efficiency (TWRR)** answers: is this *holding* earning its keep?
 - **Fund-as-symbol (account-level TWRR index)** answers: is *this account / this manager (me)* earning its keep after deposits and withdrawals are neutralized?
 
-No fabricated history. Incomplete truth over comforting fiction. Local data only — the repository is safe to open-source; your balances and exports stay on your machine under the **canonical instance home** `~/.portfolio-analysis/` (`PORTFOLIO_ANALYSIS_HOME`). See [SECURITY.md](SECURITY.md). Tracked fixtures under `tests/fixtures/extractions/` are synthetic placeholders only.
+No fabricated history. Incomplete truth over comforting fiction. Local data only — the repository is safe to open-source; your balances and exports stay on your machine under the **canonical instance home** `~/.investment-portfolio-analysis/` (`PORTFOLIO_ANALYSIS_HOME`). See [SECURITY.md](SECURITY.md). Tracked fixtures under `tests/fixtures/extractions/` are synthetic placeholders only.
 
 ## Features
 
@@ -56,7 +56,7 @@ portfolio pdf-report \
     --output /tmp/portfolio-analysis-reports/Portfolio_Analysis_Report.pdf
 ```
 
-All reports and charts are written under `~/.portfolio-analysis/reports/` by default (or `PORTFOLIO_ANALYSIS_REPORTS_DIR` / `PORTFOLIO_ANALYSIS_HOME`). This keeps the git worktree clean and keeps balance-bearing artifacts with the rest of your private instance data.
+All reports and charts are written under `~/.investment-portfolio-analysis/reports/` by default (or `PORTFOLIO_ANALYSIS_REPORTS_DIR` / `PORTFOLIO_ANALYSIS_HOME`). This keeps the git worktree clean and keeps balance-bearing artifacts with the rest of your private instance data.
 
 The PDF report includes:
 - Clean executive summary
@@ -136,7 +136,7 @@ This tool has **no hardcoded "watched directory"**. You always explicitly pass t
 
 **Primary Ground Truth Directory (Hard Rule)**
 
-Raw broker exports live under the instance home **outside the repo**: preferred layout `~/.portfolio-analysis/exports/{schwab,ibkr,robinhood,fidelity}/` (legacy flat `~/.portfolio-analysis/schwab-exports/` still works for Schwab). The agent **must never** delete, move, rename, or modify files in those directories. List adapters with `portfolio brokers list`.
+Raw broker exports live under the instance home **outside the repo**: preferred layout `~/.investment-portfolio-analysis/exports/{schwab,ibkr,robinhood,fidelity}/` (legacy flat `~/.investment-portfolio-analysis/schwab-exports/` still works for Schwab). The agent **must never** delete, move, rename, or modify files in those directories. List adapters with `portfolio brokers list`.
 
 For the full recommended folder structure and rationale, see:
 [docs/Ingestion-Workflow.md → Recommended Canonical Storage](docs/Ingestion-Workflow.md#recommended-canonical-storage)

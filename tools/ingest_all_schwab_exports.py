@@ -16,7 +16,7 @@ Usage:
     python ingest_all_schwab_exports.py
 
 Location:
-    ~/.portfolio-analysis/ingest_all_schwab_exports.py
+    ~/.investment-portfolio-analysis/ingest_all_schwab_exports.py
 """
 
 import csv
@@ -30,7 +30,7 @@ from portfolio_analysis.db import init_db
 from portfolio_analysis.paths import broker_exports_dir, default_db_path
 
 # Local copies of the ingest_* functions are defined below for this standalone script
-# (used when the script is copied to ~/.portfolio-analysis/). The package versions
+# (used when the script is copied to ~/.investment-portfolio-analysis/). The package versions
 # (in src/portfolio_analysis/ingest.py) power the MCP upload tool.
 
 DB_PATH = default_db_path()

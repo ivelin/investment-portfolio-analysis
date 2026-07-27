@@ -4,7 +4,7 @@ description: "Use when analyzing personal brokerage portfolio performance from S
 
 Data Sources:
 - The skill has no watched directory inside the git repo. Users pass export paths or use the instance home.
-- **Canonical instance home (outside the source repo)**: `~/.portfolio-analysis/` (`PORTFOLIO_ANALYSIS_HOME`). Implemented in `src/portfolio_analysis/paths.py`.
+- **Canonical instance home (outside the source repo)**: `~/.investment-portfolio-analysis/` (`PORTFOLIO_ANALYSIS_HOME`). Implemented in `src/portfolio_analysis/paths.py`.
   - Exports (immutable GT): `$PORTFOLIO_ANALYSIS_HOME/exports/{broker}/` (preferred; or `PORTFOLIO_ANALYSIS_EXPORTS_DIR`). Legacy `schwab-exports/` still supported for Schwab-only trees. Never delete/modify agent-side.
   - SQLite: `$PORTFOLIO_ANALYSIS_HOME/portfolio.db` (or `PORTFOLIO_ANALYSIS_DB_PATH`).
   - Reports/charts: `$PORTFOLIO_ANALYSIS_HOME/reports/` (or `PORTFOLIO_ANALYSIS_REPORTS_DIR`).
@@ -74,7 +74,7 @@ The binary is installed via the package (`portfolio = "portfolio_analysis.cli:ma
 
 Analysis commands (`report`, `twrr`, etc.) **automatically** attempt to discover and ingest real Schwab export files from these locations if the local database lacks sufficient data (in priority order):
 
-- `~/.portfolio-analysis/schwab-exports/` (primary ground truth location — never delete files here)
+- `~/.investment-portfolio-analysis/schwab-exports/` (primary ground truth location — never delete files here)
 - `~/.hermes/cache/documents/`
 - `~/Documents/Schwab-Exports/`
 - `~/Documents/Schwab-Exports (or set PORTFOLIO_ANALYSIS_EXPORTS_DIR)/`
@@ -208,7 +208,7 @@ Table columns (example): Symbol | Qty | Mkt Val | YTD TWRR% | Broker P/L % | P/L
 ### Exact Workflow Steps (executable by agent)
 
 1. **Discover latest holdings (equities only)**
-   - Connect to DB (`~/.portfolio-analysis/portfolio.db` or PORTFOLIO_ANALYSIS_DB_PATH).
+   - Connect to DB (`~/.investment-portfolio-analysis/portfolio.db` or PORTFOLIO_ANALYSIS_DB_PATH).
    - Find latest `as_of_date` in `gt_daily_positions`.
    - SELECT symbols with quantity > 0 on that date.
    - Filter: symbol does not contain space (equities, skip options like "AMZN 01/21/2028 ...").
@@ -384,7 +384,7 @@ print("Chart:", chart_path)
 - The position series for the bottom panel is produced by the single canonical implementation (`reconstruct_daily_position_quantities` in daily_positions.py). All consumers (CLI, charts, reporting wrapper) delegate to it. Do not query daily_position_values or gt_daily_positions directly for charting series.
 - If the chart looks wrong (spikes, zeros, wrong final qty), the data is not reconciled — re-run the build tool.
 - Options symbols are supported but price fetching may be thinner.
-- Reports dir is `~/.portfolio-analysis/reports` (or `$PORTFOLIO_ANALYSIS_REPORTS_DIR` / `$PORTFOLIO_ANALYSIS_HOME`) — outside the git worktree.
+- Reports dir is `~/.investment-portfolio-analysis/reports` (or `$PORTFOLIO_ANALYSIS_REPORTS_DIR` / `$PORTFOLIO_ANALYSIS_HOME`) — outside the git worktree.
 - After new data drops, re-reconcile before generating charts.
 
 Example invocation: `portfolio chart twrr-ohlc-position --symbol AAPL` (after recon).

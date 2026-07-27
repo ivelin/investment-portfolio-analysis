@@ -18,7 +18,7 @@ reporting.py, daily_positions.py, charts.py, and twrr.py so that behavior
 stays in sync with the CLI.
 
 The server uses the instance DB under PORTFOLIO_ANALYSIS_HOME
-(~/.portfolio-analysis/portfolio.db by default).
+(~/.investment-portfolio-analysis/portfolio.db by default).
 (the same one used by the CLI after reconciliation).
 """
 

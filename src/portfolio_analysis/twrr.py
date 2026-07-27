@@ -932,7 +932,7 @@ def calculate_daily_twrr(
             f"Insufficient data in daily_twrr for {symbol} (have {len(rows)} days, need ≥{min_days}).\n"
             "Run reconciliation to (re)populate the table from the single source of truth:\n"
             "    python tools/build_reconciled_daily_positions.py \\\n"
-            "        --sacred-dir ~/.portfolio-analysis/schwab-exports \\\n"
+            "        --sacred-dir ~/.investment-portfolio-analysis/schwab-exports \\\n"
             "        --loop --max-iterations 8 --symbols " + symbol
         )
 

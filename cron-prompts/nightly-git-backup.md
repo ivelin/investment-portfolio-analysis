@@ -16,4 +16,4 @@ Prefer the scripted path: `tools/nightly-git-backup.sh` (resolves the repo root 
 - On any failure (commit or push error) → deliver full error + log content to the operator’s configured chat
 
 ## Public-repo caution
-Never stage personal Schwab exports, `~/.portfolio-analysis/` data, tokens, or `.env` files. Those paths are gitignored and must stay local.
+Never stage personal Schwab exports, `~/.investment-portfolio-analysis/` data, tokens, or `.env` files. Those paths are gitignored and must stay local.

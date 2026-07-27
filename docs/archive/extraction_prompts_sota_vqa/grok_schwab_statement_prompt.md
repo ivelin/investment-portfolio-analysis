@@ -48,7 +48,7 @@ from src.portfolio_analysis.ingest import ingest_brokerage_statement_reconciled
 import json
 from pathlib import Path
 
-conn = get_connection(Path.home() / '.portfolio-analysis' / 'portfolio.db')
+conn = get_connection(Path.home() / '.investment-portfolio-analysis' / 'portfolio.db')
 with open('2026-04-30_extraction.json') as f:
     data = json.load(f)
 

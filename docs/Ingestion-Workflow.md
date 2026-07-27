@@ -11,7 +11,7 @@ This portfolio analysis system **only** operates on real, verified, ground-truth
 
 ### Ground Truth File Protection (Permanent Hard Rule)
 
-- The directory `~/.portfolio-analysis/schwab-exports/` (and any user-designated ground truth export directory) contains the **original, immutable Schwab export files**.
+- The directory `~/.investment-portfolio-analysis/schwab-exports/` (and any user-designated ground truth export directory) contains the **original, immutable Schwab export files**.
 - **The agent must never delete, move, rename, or modify any files in the ground truth directory.**
 - These files are the user's canonical source of truth. Any derived data (database records, caches, processed files, etc.) may be cleaned or regenerated, but the raw export files themselves are sacred and must remain untouched forever.
 

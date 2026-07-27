@@ -17,7 +17,7 @@ import pytest
 from portfolio_analysis.db import create_schema, get_connection
 from portfolio_analysis.twrr_utils import get_relevant_symbols
 
-DB_PATH = Path.home() / ".portfolio-analysis" / "portfolio.db"
+DB_PATH = Path.home() / ".investment-portfolio-analysis" / "portfolio.db"
 
 
 def _live_db_ready() -> bool:

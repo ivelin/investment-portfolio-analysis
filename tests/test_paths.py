@@ -21,10 +21,20 @@ def test_instance_home_default_is_dot_dir_under_user_home(monkeypatch, tmp_path)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     # Re-import not needed: instance_home calls Path.home() each time
     root = instance_home()
-    assert root == (tmp_path / ".portfolio-analysis").resolve()
+    # Canonical: dot + repo/dir name (investment-portfolio-analysis)
+    assert root == (tmp_path / ".investment-portfolio-analysis").resolve()
     assert root.is_absolute()
     # Never resolve into a path that looks like a source checkout of this project
     assert "src/portfolio_analysis" not in str(root)
+
+
+def test_instance_home_legacy_dot_dir_if_preferred_missing(monkeypatch, tmp_path):
+    """Pre-rename ~/.portfolio-analysis is still resolved when preferred is absent."""
+    monkeypatch.delenv("PORTFOLIO_ANALYSIS_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    legacy = tmp_path / ".portfolio-analysis"
+    legacy.mkdir()
+    assert instance_home() == legacy.resolve()
 
 
 def test_instance_home_env_override(monkeypatch, tmp_path):

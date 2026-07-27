@@ -57,8 +57,8 @@ Core principles:
 ## 3. Full Clean Cycle Runbook (Recommended)
 
 1. **Preparation**
-   - Delete `~/.portfolio-analysis/portfolio.db` (or use a fresh test DB).
-   - Ensure all raw direct structured exports (CSV/XML/JSON) are in `~/.portfolio-analysis/schwab-exports/`.
+   - Delete `~/.investment-portfolio-analysis/portfolio.db` (or use a fresh test DB).
+   - Ensure all raw direct structured exports (CSV/XML/JSON) are in `~/.investment-portfolio-analysis/schwab-exports/`.
 
 2. **Ingestion (direct structured only)**
    - Run the master ingestion scripts: `tools/ingest_all_schwab_exports.py`, `tools/ingest_account_statement_equities.py`, `tools/ingest_positions_csv.py` (current canonical implementations).
@@ -134,11 +134,11 @@ These tests must pass before considering any production daily positions data "pr
 
 ---
 
-**Next Action**: Ensure all direct structured Schwab exports (AccountStatement CSVs, Positions CSVs, Transactions CSVs/XML, Realized Gains CSVs, etc.) are in `~/.portfolio-analysis/schwab-exports/`, then run the self-healing reconciliation:
+**Next Action**: Ensure all direct structured Schwab exports (AccountStatement CSVs, Positions CSVs, Transactions CSVs/XML, Realized Gains CSVs, etc.) are in `~/.investment-portfolio-analysis/schwab-exports/`, then run the self-healing reconciliation:
 
 ```bash
 python tools/build_reconciled_daily_positions.py \
-    --sacred-dir ~/.portfolio-analysis/schwab-exports \
+    --sacred-dir ~/.investment-portfolio-analysis/schwab-exports \
     --loop \
     --max-iterations 8 \
     --verify-aapl

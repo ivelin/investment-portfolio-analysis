@@ -84,6 +84,10 @@ output/
 reports/
 
 # Local portfolio data, broker tokens, and secrets (never commit)
+# Canonical instance home: dot + repo dir name
+.investment-portfolio-analysis/
+**/.investment-portfolio-analysis/
+# Legacy instance home (pre public-repo rename)
 .portfolio-analysis/
 **/.portfolio-analysis/
 **/portfolio.db

@@ -42,7 +42,7 @@ def _live_portfolio_db_available() -> bool:
         "yes",
     ):
         return False
-    db = Path.home() / ".portfolio-analysis" / "portfolio.db"
+    db = Path.home() / ".investment-portfolio-analysis" / "portfolio.db"
     if not db.exists():
         return False
     try:

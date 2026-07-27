@@ -14,7 +14,7 @@ Responsibilities:
 
 Usage examples:
     python tools/build_reconciled_daily_positions.py --help
-    python tools/build_reconciled_daily_positions.py --sacred-dir ~/.portfolio-analysis/schwab-exports --loop --max-iterations 5
+    python tools/build_reconciled_daily_positions.py --sacred-dir ~/.investment-portfolio-analysis/schwab-exports --loop --max-iterations 5
 """
 
 import argparse

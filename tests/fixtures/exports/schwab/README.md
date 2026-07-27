@@ -21,6 +21,6 @@ They are **not** real balances or tax data.
 
 ## Local private workflow
 
-Place your real exports under `~/.portfolio-analysis/schwab-exports/` (outside
+Place your real exports under `~/.investment-portfolio-analysis/schwab-exports/` (outside
 the git tree) and point tools at that path. Never copy unredacted personal
 exports into this repository when preparing a public push.

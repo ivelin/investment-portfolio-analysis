@@ -118,4 +118,4 @@ Treat the account like a fund/ETF symbol:
 
 ## Local data only
 
-All instance data lives under `PORTFOLIO_ANALYSIS_HOME` (default `~/.portfolio-analysis/`). See [SECURITY.md](../SECURITY.md) and `src/portfolio_analysis/paths.py`. No real broker payloads in the repository.
+All instance data lives under `PORTFOLIO_ANALYSIS_HOME` (default `~/.investment-portfolio-analysis/`). See [SECURITY.md](../SECURITY.md) and `src/portfolio_analysis/paths.py`. No real broker payloads in the repository.

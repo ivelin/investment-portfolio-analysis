@@ -2,9 +2,10 @@
 
 All concrete brokerage exports, SQLite state, generated reports that may
 contain balances, OAuth tokens, and local secret files live under a single
-directory **outside the source repository**:
+directory **outside the source repository**. Convention: **dot + repo/dir
+name** (same pattern as ``~/schwab-mcp`` → ``~/.schwab-mcp``):
 
-    ~/.portfolio-analysis/          # default PORTFOLIO_ANALYSIS_HOME
+    ~/.investment-portfolio-analysis/   # default PORTFOLIO_ANALYSIS_HOME
       portfolio.db
       exports/                      # multi-broker raw exports (preferred)
         schwab/
@@ -43,7 +44,10 @@ import re
 from pathlib import Path
 
 # Directory name under $HOME when PORTFOLIO_ANALYSIS_HOME is unset.
-_DEFAULT_HOME_NAME = ".portfolio-analysis"
+# Canonical: dot-prefixed clone/repo directory name.
+_DEFAULT_HOME_NAME = ".investment-portfolio-analysis"
+# Pre-rename default (private-repo era); still resolved if present and preferred missing.
+_LEGACY_HOME_NAME = ".portfolio-analysis"
 _LEGACY_SCHWAB_EXPORTS = "schwab-exports"
 _EXPORTS_ROOT_NAME = "exports"
 
@@ -58,11 +62,24 @@ KNOWN_BROKER_IDS = (
 
 
 def instance_home() -> Path:
-    """Root directory for all operator-private instance data (never the git repo)."""
+    """Root directory for all operator-private instance data (never the git repo).
+
+    Resolution order:
+    1. ``PORTFOLIO_ANALYSIS_HOME``
+    2. ``~/.investment-portfolio-analysis`` if it exists
+    3. legacy ``~/.portfolio-analysis`` if it exists (pre-public-rename)
+    4. otherwise the preferred path ``~/.investment-portfolio-analysis``
+    """
     raw = os.environ.get("PORTFOLIO_ANALYSIS_HOME")
     if raw:
         return Path(raw).expanduser().resolve()
-    return (Path.home() / _DEFAULT_HOME_NAME).resolve()
+    preferred = Path.home() / _DEFAULT_HOME_NAME
+    legacy = Path.home() / _LEGACY_HOME_NAME
+    if preferred.exists():
+        return preferred.resolve()
+    if legacy.exists():
+        return legacy.resolve()
+    return preferred.resolve()
 
 
 def ensure_instance_home() -> Path:
@@ -105,8 +122,8 @@ def default_exports_dir() -> Path:
 
     Resolution order:
     1. PORTFOLIO_ANALYSIS_EXPORTS_DIR
-    2. ``$HOME/.portfolio-analysis/exports`` if it exists
-    3. legacy ``$HOME/.portfolio-analysis/schwab-exports`` if it exists
+    2. ``$PORTFOLIO_ANALYSIS_HOME/exports`` if it exists
+    3. legacy ``$PORTFOLIO_ANALYSIS_HOME/schwab-exports`` if it exists
        (treated as a Schwab-only flat tree for backward compatibility)
     4. otherwise the preferred modern path ``…/exports`` (may not exist yet)
     """

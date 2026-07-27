@@ -23,7 +23,7 @@ import sqlite3
 from portfolio_analysis.db import create_schema
 from portfolio_analysis.twrr_utils import classify_symbol
 
-DB_PATH = Path.home() / ".portfolio-analysis" / "portfolio.db"
+DB_PATH = Path.home() / ".investment-portfolio-analysis" / "portfolio.db"
 
 
 def _live_anchors_ready() -> bool:

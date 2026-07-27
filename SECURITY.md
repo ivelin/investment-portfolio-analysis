@@ -7,7 +7,7 @@ This project is designed so **personal brokerage data stays on the operator’s 
 All concrete *instance* data for a running operator lives under:
 
 ```text
-~/.portfolio-analysis/                 # PORTFOLIO_ANALYSIS_HOME
+~/.investment-portfolio-analysis/                 # PORTFOLIO_ANALYSIS_HOME
   portfolio.db                         # SQLite ground truth + derived tables
   exports/                             # multi-broker raw exports (preferred)
     schwab/                            # Charles Schwab / TDA structured exports
@@ -66,7 +66,7 @@ Legacy fallbacks (read-only compatibility):
 
 ## Never commit
 
-- Anything under `PORTFOLIO_ANALYSIS_HOME` / `~/.portfolio-analysis/`
+- Anything under `PORTFOLIO_ANALYSIS_HOME` / `~/.investment-portfolio-analysis/`
 - Broker export files (CSV, XML, PDF statements, 1099s) from any broker
 - Local SQLite databases
 - OAuth tokens (`tokens.json`, `client_secret*.json`)
