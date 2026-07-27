@@ -8,10 +8,10 @@ When a skill has its own substantial Git repository (e.g. `portfolio-analysis`),
 
 ## Recommended Pattern
 
-1. Keep the canonical code and `SKILL.md` in the real repository (e.g. `~/portfolio-analysis`).
+1. Keep the canonical code and `SKILL.md` in the real repository (e.g. `~/investment-portfolio-analysis`).
 2. Create a symlink in the Hermes skills directory:
    ```bash
-   ~/.hermes/skills/<category>/<skill-name> -> ~/portfolio-analysis
+   ~/.hermes/skills/<category>/<skill-name> -> ~/investment-portfolio-analysis
    ```
 3. Move any Hermes-specific reference files (architecture decisions, delivery preferences, etc.) into a `references/` folder inside the real repo.
 4. Update `SKILL.md` to document the symlink pattern and point to the real repository.
@@ -24,7 +24,7 @@ When a skill has its own substantial Git repository (e.g. `portfolio-analysis`),
 
 ## Example
 ```bash
-ln -s ~/portfolio-analysis ~/.hermes/skills/openclaw-imports/portfolio-analysis
+ln -sfn ~/investment-portfolio-analysis ~/.hermes/skills/openclaw-imports/portfolio-analysis
 ```
 
 This pattern should be used for any skill that has grown beyond a simple helper into its own maintained codebase.

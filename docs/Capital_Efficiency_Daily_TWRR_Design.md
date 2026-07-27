@@ -50,7 +50,7 @@ The design augments the existing SQLite-backed manual-ingest architecture rather
 ## Background & Motivation
 
 ### Current State (capital_efficiency_v2)
-- Located: [src/portfolio_analysis/capital_efficiency.py](~/portfolio-analysis/src/portfolio_analysis/capital_efficiency.py) (lines 31-138)
+- Located: [src/portfolio_analysis/capital_efficiency.py](../src/portfolio_analysis/capital_efficiency.py) (lines 31-138)
 - Uses per-lot `realized_gains` + latest `positions` snapshot.
 - Rough time-weighting: `total_capital_days / (lot_count * 90)` as proxy for avg_invested.
 - Efficiency = `(total_profit / avg_invested) * 100` — a money-weighted-like return approximation, not true TWRR.

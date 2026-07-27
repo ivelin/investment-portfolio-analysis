@@ -44,7 +44,7 @@ metadata:
 
 Dedicated skill and codebase for importing, analyzing, and continuously improving a personal portfolio using data from Charles Schwab Developer API. Focuses on **CANSLIM** methodology and hard performance metrics (IRR, ROI, expectancy, drawdown) with the goal of matching or exceeding top practitioners.
 
-This is the canonical implementation living in https://github.com/ivelin/portfolio-analysis.
+This is the canonical implementation living in https://github.com/ivelin/investment-portfolio-analysis.
 
 ## CLI Usage (Primary Interface)
 

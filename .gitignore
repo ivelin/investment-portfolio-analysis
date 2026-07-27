@@ -123,6 +123,8 @@ coverage_report_*.csv
 *report*.pdf
 *detailed*twrr*.txt
 twrr_report*.*
+# Keep the reusable CLI helper (not a generated artifact)
+!tools/twrr_report.py
 ytd_report*.*
 aapl*report*.*
 weed*report*.*
