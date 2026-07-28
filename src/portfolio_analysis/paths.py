@@ -234,6 +234,48 @@ def connector_secrets_path(broker: str, kind: str = "oauth") -> Path:
     return secrets_dir() / f"{b}_{kind}.json"
 
 
+def locks_dir() -> Path:
+    """Advisory lock files for single-writer instance operations."""
+    return instance_home() / "locks"
+
+
+def job_lock_path(job_id: str) -> Path:
+    """Exclusive flock path for one registered job id."""
+    safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", (job_id or "job").strip()) or "job"
+    return locks_dir() / f"{safe}.lock"
+
+
+def sync_lock_path() -> Path:
+    """Exclusive lock for connector → local-DB sync (alias of job lock)."""
+    return job_lock_path("connector_sync")
+
+
+def jobs_dir() -> Path:
+    """Durable job run status (non-secret JSON under instance home)."""
+    return instance_home() / "jobs"
+
+
+def job_runs_dir() -> Path:
+    """Per-run status files (run_id.json)."""
+    return jobs_dir() / "runs"
+
+
+def job_status_path(job_id: str) -> Path:
+    """Last status for a job id (non-secret)."""
+    safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", (job_id or "job").strip()) or "job"
+    return jobs_dir() / f"{safe}_status.json"
+
+
+def sync_status_path() -> Path:
+    """Last connector_sync status (legacy path + jobs alias)."""
+    # Prefer new jobs path; fall back to legacy root-level file if present.
+    modern = job_status_path("connector_sync")
+    legacy = instance_home() / "sync_status.json"
+    if modern.is_file() or not legacy.is_file():
+        return modern
+    return legacy
+
+
 def env_file_candidates() -> list[Path]:
     """Ordered list of .env files that may hold market-data API keys.
 

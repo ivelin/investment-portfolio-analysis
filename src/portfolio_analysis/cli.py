@@ -289,6 +289,96 @@ def main():
     conn_oc.add_argument("--code", required=True)
     conn_oc.add_argument("--verifier", default=None)
 
+    # Continuous connector → local GT sync (one-shot; no scheduler)
+    sync_p = subparsers.add_parser(
+        "sync",
+        help=(
+            "One-shot broker connector → local GT sync "
+            "(sequential accounts; conflict-free lock)"
+        ),
+    )
+    sync_sub = sync_p.add_subparsers(dest="sync_command")
+    sync_run = sync_sub.add_parser(
+        "run",
+        help="Pull enabled connectors into local GT + rebuild fund series if changed",
+    )
+    for _sp in (sync_p, sync_run):
+        _sp.add_argument(
+            "--broker",
+            action="append",
+            dest="brokers",
+            default=None,
+            help="Broker id to sync (repeatable). Default: enabled live connectors",
+        )
+        _sp.add_argument(
+            "--demo",
+            action="store_true",
+            help="Offline synthetic adapter (no credentials / network)",
+        )
+        _sp.add_argument(
+            "--force",
+            action="store_true",
+            help="Ignore min-interval stale gate",
+        )
+        _sp.add_argument(
+            "--min-interval-seconds",
+            type=int,
+            default=0,
+            help="Skip if last success is newer than this many seconds (0=always try)",
+        )
+    sync_sub.add_parser(
+        "status",
+        help="Show last sync status (non-secret; includes lock + staleness)",
+    )
+
+    # Unified jobs (list / run / status) — one-shot CLI, no scheduler
+    jobs_p = subparsers.add_parser(
+        "jobs",
+        help="List/run/status registered jobs (connector_sync, daily_net_liq, …)",
+    )
+    jobs_sub = jobs_p.add_subparsers(dest="jobs_command")
+    jobs_sub.add_parser("list", help="List registered jobs and last status")
+    jobs_run = jobs_sub.add_parser("run", help="Run a job once (foreground)")
+    jobs_run.add_argument(
+        "job_id",
+        help="Job id: connector_sync | daily_net_liq",
+    )
+    jobs_run.add_argument("--demo", action="store_true", help="For connector_sync")
+    jobs_run.add_argument("--force", action="store_true")
+    jobs_run.add_argument("--broker", default=None, help="Limit to one broker")
+    jobs_run.add_argument(
+        "--background",
+        action="store_true",
+        help="Return run_id immediately (poll with jobs status --run-id)",
+    )
+    jobs_run.add_argument(
+        "--min-interval-seconds",
+        type=int,
+        default=0,
+        help="connector_sync stale gate",
+    )
+    jobs_st = jobs_sub.add_parser(
+        "status", help="Job or run status (pollable; no secrets)"
+    )
+    jobs_st.add_argument("job_id", nargs="?", default=None)
+    jobs_st.add_argument("--run-id", default=None, help="Specific run id")
+
+    # Continuous service (scheduler + optional MCP)
+    serve_p = subparsers.add_parser(
+        "serve",
+        help=(
+            "Run continuous service: built-in scheduler + optional MCP "
+            "(survives reboot when installed as a system unit)"
+        ),
+    )
+    serve_p.add_argument("--mcp-http", action="store_true")
+    serve_p.add_argument("--mcp-stdio", action="store_true")
+    serve_p.add_argument("--host", default=None)
+    serve_p.add_argument("--port", type=int, default=None)
+    serve_p.add_argument("--timezone", default=None)
+    serve_p.add_argument("--no-scheduler", action="store_true")
+    serve_p.add_argument("-v", "--verbose", action="store_true")
+
     args = parser.parse_args()
 
     if args.command == "report":
@@ -436,8 +526,116 @@ def main():
     elif args.command == "connectors":
         _run_connectors_command(args)
 
+    elif args.command == "sync":
+        _run_sync_command(args)
+
+    elif args.command == "jobs":
+        _run_jobs_command(args)
+
+    elif args.command == "serve":
+        import os
+
+        from .service import run_service
+
+        sys.exit(
+            run_service(
+                mcp_http=bool(args.mcp_http),
+                mcp_stdio=bool(args.mcp_stdio),
+                host=args.host or os.environ.get("MCP_HOST", "0.0.0.0"),
+                port=int(
+                    args.port
+                    if args.port is not None
+                    else os.environ.get("MCP_PORT", "3460")
+                ),
+                timezone=args.timezone
+                or os.environ.get("PORTFOLIO_ANALYSIS_TZ", "America/Chicago"),
+                enable_scheduler=not args.no_scheduler,
+            )
+        )
+
     else:
         parser.print_help()
+
+
+def _run_sync_command(args) -> None:
+    """Handle ``portfolio sync`` / ``portfolio sync run|status``."""
+    import json
+
+    from portfolio_analysis.sync import (
+        format_sync_result_json,
+        load_sync_status,
+        run_sync,
+    )
+
+    cmd = getattr(args, "sync_command", None)
+    if cmd == "status":
+        print(json.dumps(load_sync_status(), indent=2))
+        return
+
+    result = run_sync(
+        brokers=getattr(args, "brokers", None),
+        demo=bool(getattr(args, "demo", False)),
+        force=bool(getattr(args, "force", False)),
+        min_interval_seconds=int(getattr(args, "min_interval_seconds", 0) or 0),
+    )
+    print(format_sync_result_json(result))
+    if not result.ok and not result.skipped:
+        sys.exit(1)
+
+
+def _run_jobs_command(args) -> None:
+    """Handle ``portfolio jobs list|run|status``."""
+    import json
+
+    from portfolio_analysis.jobs.registry import list_jobs
+    from portfolio_analysis.jobs.runner import get_run_status, list_job_statuses, start_job
+
+    cmd = getattr(args, "jobs_command", None)
+    if cmd is None or cmd == "list":
+        print(
+            json.dumps(
+                {"jobs": list_jobs(), "status": list_job_statuses()},
+                indent=2,
+            )
+        )
+        return
+    if cmd == "status":
+        print(
+            json.dumps(
+                get_run_status(
+                    run_id=getattr(args, "run_id", None),
+                    job_id=getattr(args, "job_id", None),
+                ),
+                indent=2,
+            )
+        )
+        return
+    if cmd == "run":
+        job_id = args.job_id
+        kwargs: dict = {"force": bool(getattr(args, "force", False))}
+        if job_id == "connector_sync":
+            kwargs["demo"] = bool(getattr(args, "demo", False))
+            kwargs["min_interval_seconds"] = int(
+                getattr(args, "min_interval_seconds", 0) or 0
+            )
+            if getattr(args, "broker", None):
+                kwargs["brokers"] = [args.broker]
+        elif job_id == "daily_net_liq":
+            if getattr(args, "broker", None):
+                kwargs["broker"] = args.broker
+        out = start_job(
+            job_id,
+            background=bool(getattr(args, "background", False)),
+            trigger="cli",
+            **kwargs,
+        )
+        print(json.dumps(out, indent=2))
+        if out.get("state") == "failed" or out.get("ok") is False:
+            if not out.get("skipped"):
+                sys.exit(1)
+        return
+    print("Usage: portfolio jobs {list|run|status} …")
+    sys.exit(2)
 
 
 def _run_brokers_command(args) -> None:

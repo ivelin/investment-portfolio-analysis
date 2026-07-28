@@ -1,0 +1,22 @@
+[Unit]
+Description=Portfolio Analysis continuous service (scheduler + optional MCP)
+Documentation=file:///home/openclaw/investment-portfolio-analysis/docs/Jobs_And_Service.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/investment-portfolio-analysis
+Environment=PORTFOLIO_ANALYSIS_HOME=%h/.investment-portfolio-analysis
+Environment=MCP_HOST=127.0.0.1
+Environment=MCP_PORT=3460
+Environment=PORTFOLIO_ANALYSIS_TZ=America/Chicago
+# Adjust path to your uv/venv install of the package:
+ExecStart=%h/investment-portfolio-analysis/.venv/bin/portfolio serve --mcp-http --host 127.0.0.1 --port 3460
+Restart=always
+RestartSec=5
+# Private data dirs must be writable
+ReadWritePaths=%h/.investment-portfolio-analysis
+
+[Install]
+WantedBy=default.target

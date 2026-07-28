@@ -24,6 +24,7 @@ This directory contains the detailed specifications, workflows, and design docum
 - [Capital_Efficiency_Daily_TWRR_Design.md](Capital_Efficiency_Daily_TWRR_Design.md) — High-level design for the Daily TWRR Capital Efficiency system and the event-driven reconstruction approach.
 - [TWRR_Daily_Implementation_Plan.md](TWRR_Daily_Implementation_Plan.md) — Phased implementation plan for the daily TWRR engine.
 - [INGESTION_AND_RECONCILIATION_FRAMEWORK.md](INGESTION_AND_RECONCILIATION_FRAMEWORK.md) — Detailed framework for ingestion strategies, GT anchor fidelity, daily position reconstruction, and self-healing reconciliation loops (includes the full export type matrix).
+- [Jobs_And_Service.md](Jobs_And_Service.md) — Continuous service, staggered hourly jobs (connector_sync + daily_net_liq), CLI/MCP status contract
 - [Fund_As_Symbol_Design.md](Fund_As_Symbol_Design.md) — Private fund-as-symbol: account-level TWRR growth index, multi-broker adapters, MA stack / under-MA alerts.
 
 ### Statement Extraction Prompts (Retired PDF/SOTA VQA Path)

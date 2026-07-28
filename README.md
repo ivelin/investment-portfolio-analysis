@@ -110,6 +110,25 @@ portfolio fund alerts --symbol FUND:synthetic:demo01
 
 See [docs/Fund_As_Symbol_Design.md](docs/Fund_As_Symbol_Design.md).
 
+### Continuous service & hourly jobs
+
+Long-lived process (survives reboot when installed as one systemd unit) runs a built-in scheduler with two **staggered hourly** jobs:
+
+1. **`connector_sync`** (:05) — sequential broker/account live pull → local GT  
+2. **`daily_net_liq`** (:35) — gap-fill per-account daily net liquidation from local GT (market days only; **today always reprocessed** for live exact match)
+
+```bash
+# One-shot (no scheduler)
+portfolio sync --demo --force
+portfolio jobs run daily_net_liq --force
+portfolio jobs status connector_sync
+
+# Continuous service (scheduler ON + MCP HTTP for any client)
+portfolio serve --mcp-http --host 127.0.0.1 --port 3460
+```
+
+MCP tools (same for every client): `jobs_list_tool`, `jobs_run_tool` (returns `run_id`), `jobs_status_tool` (poll). Full contract: [docs/Jobs_And_Service.md](docs/Jobs_And_Service.md). Example unit: `deploy/portfolio-analysis.service`.
+
 ### Local CI
 
 ```bash

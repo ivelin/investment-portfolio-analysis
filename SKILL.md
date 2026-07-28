@@ -69,6 +69,8 @@ The binary is installed via the package (`portfolio = "portfolio_analysis.cli:ma
 | `portfolio chart distribution` | Position size distribution chart            | `--positions PATH --output PATH`               | Visualization only |
 | `portfolio daily-positions`    | Anchored daily qty series (for charts)      | `--symbol S --start-date D --end-date D`       | Clean step series; ignores Journals; used by twrr-ohlc-position chart |
 | `portfolio chart twrr-ohlc-position` | TWRR/OHLC/Position step chart          | `--symbol S [--start-date] [--end-date]`       | Bottom panel from recon (no bad daily_position_values data) |
+| `portfolio sync` / `portfolio jobs …` | Connector GT sync + daily net-liq jobs | `--demo --force`; `jobs run|status|list`       | One-shot; continuous: `portfolio serve` (scheduler) |
+| `portfolio serve` | Continuous service (scheduler + MCP) | `--mcp-http` / `--mcp-stdio` | Staggered hourly jobs; see docs/Jobs_And_Service.md |
 
 ### Implicit Ingestion Behavior
 
