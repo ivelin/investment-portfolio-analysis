@@ -85,17 +85,30 @@ Status payloads never include tokens or client secrets.
 ## Manual MCP client check
 
 ```bash
-# Terminal A — continuous service (scheduler + MCP HTTP)
+# Preferred: user systemd unit (survives reboot)
+systemctl --user enable --now portfolio-analysis.service
+systemctl --user status portfolio-analysis.service
+
+# Or one-off foreground
 portfolio serve --mcp-http --host 127.0.0.1 --port 3460
 
-# Terminal B — one-shot smoke (optional)
+# One-shot smoke (optional)
 portfolio jobs list
 portfolio jobs run connector_sync --force   # live connectors if configured
 portfolio jobs run daily_net_liq --force
 portfolio jobs status daily_net_liq
 ```
 
-Point any MCP client (Grok App, IDE, etc.) at Streamable HTTP `http://127.0.0.1:3460/mcp` (or your gateway URL). Use `jobs_run_tool` then poll `jobs_status_tool(run_id=…)`.
+### URLs
+
+| Client | URL |
+|--------|-----|
+| Local Streamable HTTP | `http://127.0.0.1:3460/mcp` |
+| **Grok App / remote (Tailscale Funnel)** | `https://spark-9045.tail39d5a.ts.net/mcp/portfolio/mcp?apikey=$PORTFOLIO_MCP_KEY` |
+
+`PORTFOLIO_MCP_KEY` lives in `~/.env` (gateway owner whitelist). MCP gateway (`mcp-gateway.service`) proxies `/mcp/portfolio` → `127.0.0.1:3460`.
+
+Point any MCP client at the local or public URL. Use `jobs_run_tool` then poll `jobs_status_tool(run_id=…)`.
 
 ## Tests
 
