@@ -25,6 +25,9 @@ All concrete *instance* data for a running operator lives under:
   schwab/tokens.json                   # older Schwab token path (still read)
   .env                                 # optional market-data / broker keys for this skill
   cache/                               # optional local caches
+  locks/                               # advisory flock files per job (no secrets)
+  jobs/                                # job status JSON (counts/dates only; no secrets)
+    runs/                              # per run_id status for MCP poll
 ```
 
 | Path | Env override |
@@ -48,6 +51,10 @@ Modes: `mcp` (e.g. `http://127.0.0.1:3473/mcp` or a remote gateway URL), `direct
 
 Client id/secret and tokens are written only under `secrets/` and `tokens/` with
 restrictive permissions. Tool responses are always redacted.
+
+Continuous jobs (`portfolio serve` / `jobs_*` MCP tools) persist **non-secret**
+status under `jobs/` and `locks/`. Never put tokens or account numbers in those
+files (enforced by status redaction helpers).
 
 Per-broker export directories: `portfolio_analysis.paths.broker_exports_dir("schwab")` etc.
 Adapter registry: `portfolio_analysis.brokers` (`portfolio brokers list`).

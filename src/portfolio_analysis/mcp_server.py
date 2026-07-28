@@ -68,6 +68,9 @@ mcp = FastMCP(
         "After upload+ingest, call the report tools for fresh numbers. "
         "Configure multi-broker live connectors with list/configure/test_connector tools "
         "(credentials + OAuth tokens stored only under PORTFOLIO_ANALYSIS_HOME/secrets and tokens). "
+        "Jobs: jobs_list_tool, jobs_run_tool (returns run_id quickly; poll jobs_status_tool), "
+        "jobs_status_tool; also sync_connectors_tool / sync_status_tool. "
+        "All MCP clients share the same tools (no client-specific behavior). "
         "All private data lives under PORTFOLIO_ANALYSIS_HOME (never the git repo). "
         "Behavior matches the `portfolio` CLI. Use after reconciliation for best TWRR results."
     ),
@@ -515,6 +518,105 @@ def connector_oauth_status_tool(broker: str = "schwab") -> str:
     from portfolio_analysis.connectors import oauth_status
 
     return json.dumps(oauth_status(broker), indent=2)
+
+
+@mcp.tool()
+def sync_connectors_tool(
+    brokers: list[str] | None = None,
+    demo: bool = False,
+    force: bool = False,
+    min_interval_seconds: int = 0,
+) -> str:
+    """One-shot broker connector → local GT sync (same as ``portfolio sync``).
+
+    Sequential per broker/account. Conflict-free lock. Never fabricates balances.
+    For async poll pattern prefer jobs_run_tool(job_id='connector_sync').
+    """
+    from portfolio_analysis.sync import format_sync_result_json, run_sync
+
+    result = run_sync(
+        brokers=brokers,
+        demo=demo,
+        force=force,
+        min_interval_seconds=int(min_interval_seconds or 0),
+    )
+    return format_sync_result_json(result)
+
+
+@mcp.tool()
+def sync_status_tool() -> str:
+    """Last connector_sync status (non-secret). Safe for any MCP client."""
+    import json
+
+    from portfolio_analysis.sync import load_sync_status
+
+    return json.dumps(load_sync_status(), indent=2)
+
+
+@mcp.tool()
+def jobs_list_tool() -> str:
+    """List registered jobs and last status (catalog + status; no secrets)."""
+    import json
+
+    from portfolio_analysis.jobs.registry import list_jobs
+    from portfolio_analysis.jobs.runner import list_job_statuses
+
+    return json.dumps(
+        {"jobs": list_jobs(), "status": list_job_statuses()},
+        indent=2,
+    )
+
+
+@mcp.tool()
+def jobs_run_tool(
+    job_id: str,
+    background: bool = True,
+    demo: bool = False,
+    force: bool = False,
+    broker: str | None = None,
+    min_interval_seconds: int = 0,
+) -> str:
+    """Start a registered job. Default background=True returns run_id immediately.
+
+    Poll with jobs_status_tool(run_id=...). Does not require a streaming MCP session.
+    job_id: connector_sync | daily_net_liq
+    """
+    import json
+
+    from portfolio_analysis.jobs.runner import start_job
+
+    kwargs: dict = {"force": bool(force)}
+    if job_id == "connector_sync":
+        kwargs["demo"] = bool(demo)
+        kwargs["min_interval_seconds"] = int(min_interval_seconds or 0)
+        if broker:
+            kwargs["brokers"] = [broker]
+    elif job_id == "daily_net_liq":
+        if broker:
+            kwargs["broker"] = broker
+    out = start_job(
+        job_id,
+        background=bool(background),
+        trigger="mcp",
+        **kwargs,
+    )
+    return json.dumps(out, indent=2)
+
+
+@mcp.tool()
+def jobs_status_tool(
+    run_id: str | None = None,
+    job_id: str | None = None,
+) -> str:
+    """Poll job/run status (pending/running/ok/failed/skipped). No secrets.
+
+    Pass run_id from jobs_run_tool, or job_id for last status, or neither for all.
+    """
+    import json
+
+    from portfolio_analysis.jobs.runner import get_run_status
+
+    return json.dumps(get_run_status(run_id=run_id, job_id=job_id), indent=2)
 
 
 def main() -> None:

@@ -420,6 +420,29 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "ON gt_account_positions(symbol, as_of_date)"
     )
 
+    # ------------------------------------------------------------------
+    # Derived: daily account net liquidation (one row per account/market day)
+    # Built from local gt_fund_equity_snapshots; never fabricated history.
+    # ------------------------------------------------------------------
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS daily_account_net_liq (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            broker TEXT NOT NULL,
+            account_key TEXT NOT NULL,
+            as_of_date TEXT NOT NULL,
+            net_liquidation_value REAL NOT NULL,
+            source TEXT NOT NULL DEFAULT 'gt_equity_snapshot',
+            data_quality INTEGER NOT NULL DEFAULT 100,
+            validated INTEGER NOT NULL DEFAULT 1,
+            calc_timestamp TEXT,
+            UNIQUE(broker, account_key, as_of_date)
+        )
+    """)
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_daily_net_liq_acct_date "
+        "ON daily_account_net_liq(broker, account_key, as_of_date)"
+    )
+
     conn.commit()
 
 
