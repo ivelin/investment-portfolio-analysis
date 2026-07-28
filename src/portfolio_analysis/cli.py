@@ -588,7 +588,11 @@ def _run_jobs_command(args) -> None:
     import json
 
     from portfolio_analysis.jobs.registry import list_jobs
-    from portfolio_analysis.jobs.runner import get_run_status, list_job_statuses, start_job
+    from portfolio_analysis.jobs.runner import (
+        get_run_status,
+        list_job_statuses,
+        start_job,
+    )
 
     cmd = getattr(args, "jobs_command", None)
     if cmd is None or cmd == "list":
