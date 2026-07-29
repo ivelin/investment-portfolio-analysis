@@ -338,10 +338,26 @@ def main():
     )
     jobs_sub = jobs_p.add_subparsers(dest="jobs_command")
     jobs_sub.add_parser("list", help="List registered jobs and last status")
+    jobs_refresh = jobs_sub.add_parser(
+        "refresh",
+        help="On-demand pipeline: connector_sync then daily_net_liq (hourly jobs)",
+    )
+    jobs_refresh.add_argument("--broker", default=None)
+    jobs_refresh.add_argument("--demo", action="store_true")
+    jobs_refresh.add_argument("--force", action="store_true", default=True)
+    jobs_refresh.add_argument("--min-days", type=int, default=None)
+    jobs_refresh.add_argument("--start-date", default=None)
+    jobs_refresh.add_argument("--end-date", default=None)
+    jobs_refresh.add_argument("--no-reconstruct", action="store_true")
+    jobs_refresh.add_argument(
+        "--on-insufficient",
+        choices=["fail", "partial"],
+        default="partial",
+    )
     jobs_run = jobs_sub.add_parser("run", help="Run a job once (foreground)")
     jobs_run.add_argument(
         "job_id",
-        help="Job id: connector_sync | daily_net_liq",
+        help="Job id: data_refresh | connector_sync | daily_net_liq",
     )
     jobs_run.add_argument("--demo", action="store_true", help="For connector_sync")
     jobs_run.add_argument("--force", action="store_true")
@@ -356,6 +372,38 @@ def main():
         type=int,
         default=0,
         help="connector_sync stale gate",
+    )
+    jobs_run.add_argument(
+        "--min-days",
+        type=int,
+        default=None,
+        help="daily_net_liq: requested minimum market-day series length",
+    )
+    jobs_run.add_argument(
+        "--start-date",
+        default=None,
+        help="daily_net_liq: window start YYYY-MM-DD",
+    )
+    jobs_run.add_argument(
+        "--end-date",
+        default=None,
+        help="daily_net_liq: window end YYYY-MM-DD (default today)",
+    )
+    jobs_run.add_argument(
+        "--pre-sync",
+        action="store_true",
+        help="daily_net_liq: run connector_sync first",
+    )
+    jobs_run.add_argument(
+        "--no-reconstruct",
+        action="store_true",
+        help="daily_net_liq: do not fill gaps from positions/cash-flows",
+    )
+    jobs_run.add_argument(
+        "--on-insufficient",
+        choices=["fail", "partial"],
+        default="fail",
+        help="daily_net_liq: fail or partial when under min_days",
     )
     jobs_st = jobs_sub.add_parser(
         "status", help="Job or run status (pollable; no secrets)"
@@ -603,6 +651,30 @@ def _run_jobs_command(args) -> None:
             )
         )
         return
+    if cmd == "refresh":
+        from portfolio_analysis.jobs.pipeline import run_data_refresh
+
+        out = run_data_refresh(
+            broker=getattr(args, "broker", None),
+            force=bool(getattr(args, "force", True)),
+            demo=bool(getattr(args, "demo", False)),
+            min_days=getattr(args, "min_days", None),
+            start_date=getattr(args, "start_date", None),
+            end_date=getattr(args, "end_date", None),
+            allow_reconstruct=not bool(getattr(args, "no_reconstruct", False)),
+            on_insufficient=getattr(args, "on_insufficient", "partial") or "partial",
+        )
+        print(json.dumps(out, indent=2))
+        if not out.get("ok") and out.get("reason") not in (
+            "partial_coverage",
+            "insufficient_history",
+        ):
+            # insufficient with partial mode is ok=True; fail mode may be False
+            if out.get("reason") == "insufficient_history" and out.get("ok") is False:
+                sys.exit(2)
+            if out.get("ok") is False:
+                sys.exit(1)
+        return
     if cmd == "status":
         print(
             json.dumps(
@@ -624,9 +696,47 @@ def _run_jobs_command(args) -> None:
             )
             if getattr(args, "broker", None):
                 kwargs["brokers"] = [args.broker]
+        elif job_id == "data_refresh":
+            kwargs["demo"] = bool(getattr(args, "demo", False))
+            if getattr(args, "broker", None):
+                kwargs["broker"] = args.broker
+            if getattr(args, "min_days", None) is not None:
+                kwargs["min_days"] = int(args.min_days)
+            if getattr(args, "start_date", None):
+                kwargs["start_date"] = args.start_date
+            if getattr(args, "end_date", None):
+                kwargs["end_date"] = args.end_date
+            kwargs["allow_reconstruct"] = not bool(
+                getattr(args, "no_reconstruct", False)
+            )
+            kwargs["on_insufficient"] = (
+                getattr(args, "on_insufficient", None) or "partial"
+            )
+            kwargs["maximize_history"] = getattr(
+                args, "min_days", None
+            ) is None and not getattr(args, "start_date", None)
         elif job_id == "daily_net_liq":
             if getattr(args, "broker", None):
                 kwargs["broker"] = args.broker
+            if getattr(args, "min_days", None) is not None:
+                kwargs["min_days"] = int(args.min_days)
+            if getattr(args, "start_date", None):
+                kwargs["start_date"] = args.start_date
+            if getattr(args, "end_date", None):
+                kwargs["end_date"] = args.end_date
+            if getattr(args, "pre_sync", False):
+                kwargs["pre_sync"] = True
+            if getattr(args, "demo", False):
+                kwargs["demo"] = True
+            kwargs["allow_reconstruct"] = not bool(
+                getattr(args, "no_reconstruct", False)
+            )
+            kwargs["on_insufficient"] = (
+                getattr(args, "on_insufficient", "fail") or "fail"
+            )
+            kwargs["maximize_history"] = getattr(
+                args, "min_days", None
+            ) is None and not getattr(args, "start_date", None)
         out = start_job(
             job_id,
             background=bool(getattr(args, "background", False)),

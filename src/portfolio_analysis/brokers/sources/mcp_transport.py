@@ -128,6 +128,27 @@ async def create_mcp_session(
     raise ValueError("McpTransportConfig requires url or command")
 
 
+def _run_coro_sync(coro: Any) -> Any:
+    """Run an async coroutine from sync code, even inside a running event loop.
+
+    ``asyncio.run()`` raises if the portfolio-analysis MCP HTTP server (or any
+    async host) already has a loop. In that case run the coroutine on a fresh
+    loop in a worker thread so connector_sync / jobs_run still work.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import concurrent.futures
+
+    def _in_thread() -> Any:
+        return asyncio.run(coro)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(_in_thread).result()
+
+
 def call_mcp_tool_sync(
     config: McpTransportConfig,
     tool_name: str,
@@ -141,7 +162,7 @@ def call_mcp_tool_sync(
             result = await session.call_tool(full_name, dict(arguments or {}))
             return _extract_tool_payload(result)
 
-    return asyncio.run(_run())
+    return _run_coro_sync(_run())
 
 
 def list_mcp_tools_sync(config: McpTransportConfig) -> Sequence[str]:
@@ -152,7 +173,7 @@ def list_mcp_tools_sync(config: McpTransportConfig) -> Sequence[str]:
             tools = await session.list_tools()
             return [t.name for t in tools.tools]
 
-    return asyncio.run(_run())
+    return _run_coro_sync(_run())
 
 
 def _extract_tool_payload(result: Any) -> Any:

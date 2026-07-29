@@ -17,6 +17,7 @@ class FundAccount:
     broker_account_ref: str | None = (
         None  # optional opaque ref; avoid logging raw numbers
     )
+    account_number_last3: str | None = None  # last 3 digits only when known
 
 
 @dataclass(frozen=True)

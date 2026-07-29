@@ -59,20 +59,46 @@ except Exception:
 mcp = FastMCP(
     "portfolio-analysis",
     instructions=(
-        "Tools for personal portfolio TWRR / Capital Efficiency, YTD P/L vs broker, "
-        "daily position reconstruction (anchored + Journal-safe), and TWRR/OHLC/position "
-        "size chart generation (with optional trade annotations). "
-        "You can also upload fresh Schwab export files (Positions CSVs, Transactions CSVs, "
-        "Realized Gain/Loss CSVs) using upload_and_ingest_schwab_exports_tool. The server "
-        "will persist the raw files and ingest them into the immutable gt_* ground truth tables. "
-        "After upload+ingest, call the report tools for fresh numbers. "
-        "Configure multi-broker live connectors with list/configure/test_connector tools "
-        "(credentials + OAuth tokens stored only under PORTFOLIO_ANALYSIS_HOME/secrets and tokens). "
-        "Jobs: jobs_list_tool, jobs_run_tool (returns run_id quickly; poll jobs_status_tool), "
-        "jobs_status_tool; also sync_connectors_tool / sync_status_tool. "
-        "All MCP clients share the same tools (no client-specific behavior). "
-        "All private data lives under PORTFOLIO_ANALYSIS_HOME (never the git repo). "
-        "Behavior matches the `portfolio` CLI. Use after reconciliation for best TWRR results."
+        "LOCAL-FIRST portfolio platform (not a broker API passthrough). "
+        "Remote brokers only feed the local cache; multi-day history is served from local DB.\n\n"
+        "## Which tool for which question\n"
+        "Rule of thumb: if the identifier is not a public/held security ticker, "
+        "treat it as a **user account reference** and use account NLV tools — "
+        "never position/TWRR tools (those return useless zeros).\n"
+        "1) **Account net liquidation value (NLV) over time / current account value** "
+        "→ `get_account_nlv_series_tool`. "
+        "Identify the account by display_name (e.g. 'Active Trading IRA'), account_key, "
+        "or last-3 digits of the brokerage account number (e.g. '052' when the account "
+        "is masked as …052). "
+        "Do NOT pass account suffixes or account names to symbol tools.\n"
+        "2) **Per-security share quantity series** "
+        "→ `get_daily_positions_tool(symbol=TICKER)` where TICKER is a real security "
+        "(e.g. TSLA, SGOV, NVDA) — never an account number fragment.\n"
+        "3) **Per-security TWRR / capital efficiency / OHLC+position chart** "
+        "→ `get_twrr_report_tool` / `generate_twrr_ohlc_position_chart_tool` with a ticker.\n"
+        "4) **YTD TWRR + broker P/L table across holdings** → `get_ytd_twrr_pl_table_tool`.\n"
+        "5) **Refresh local cache** (sync remote→GT, seed on-disk statement NLV, maximize "
+        "local daily NLV) → `refresh_portfolio_data_tool` (same as hourly job). "
+        "Sparse multi-day history is normal; serve best-available local series + current "
+        "snapshot; do not invent past NLV from today's live NAV.\n"
+        "6) **Dense 60-day account NLV is usually NOT available** — live MCP is "
+        "point-in-time; Account Statements are monthly anchors already seeded when present. "
+        "NEVER tell the user to re-upload Schwab exports just to 'unlock' dense daily NLV. "
+        "Use get_account_nlv_series_tool and chart sparse anchors + current NLV.\n"
+        "7) **Jobs / connectors** → jobs_* tools, list/configure/test_connector. "
+        "upload_and_ingest_schwab_exports_tool is only for NEW files the user just "
+        "downloaded — not a workaround for dense NLV.\n\n"
+        "Examples:\n"
+        "- User: 'NLV history for the account ending in 052' "
+        "→ get_account_nlv_series_tool(account='052')\n"
+        "- User: 'What is Active Trading IRA worth over 60 days?' "
+        "→ get_account_nlv_series_tool(account='Active Trading IRA', min_days=60)\n"
+        "- User: 'TSLA position size last 60 days' "
+        "→ get_daily_positions_tool(symbol='TSLA', start_date=..., end_date=...)\n"
+        "- User: 'Chart TSLA TWRR' "
+        "→ generate_twrr_ohlc_position_chart_tool(symbol='TSLA')\n\n"
+        "Responses often include message, next_steps, client_guidance "
+        "(coverage-first, not false alarms). Instance data under PORTFOLIO_ANALYSIS_HOME only."
     ),
 )
 
@@ -163,13 +189,200 @@ def get_twrr_report_tool(
 
 
 @mcp.tool()
+def get_account_nlv_series_tool(
+    account: str,
+    broker: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    min_days: int | None = None,
+) -> str:
+    """Account-level net liquidation value (NLV) time series from **local** DB.
+
+    Use this for whole-account value history / current account NLV — NOT for
+    per-stock position quantity or TWRR charts.
+
+    Reads derived table ``daily_account_net_liq`` (local-first). Does not call the
+    broker for a multi-day history API. Short series is coverage truth after few
+    syncs; hourly ``data_refresh`` maximizes reconstructible days without stamping
+    today's live NAV onto past dates.
+
+    **When to use**
+    - "What is my Active Trading IRA worth over time?"
+    - "NLV for the Schwab account ending in 052"
+    - "Current net liq for Roth IRA"
+
+    **When NOT to use**
+    - Per-security quantity or TWRR → get_daily_positions_tool /
+      generate_twrr_ohlc_position_chart_tool with a **ticker** (TSLA, SGOV, …)
+
+    Args:
+        account: account_key (e.g. 47a915ae0e7e), display_name
+            (e.g. "Active Trading IRA"), or last-3 digits of the account number
+            when known (e.g. "052").
+        broker: Optional broker filter (e.g. "schwab").
+        start_date, end_date: Optional YYYY-MM-DD window filter on local rows.
+        min_days: If set and local series is shorter, reason=partial_coverage
+            with best-available series (not a hard tool failure).
+
+    Returns:
+        JSON: ok, resolved account, series[{as_of_date, net_liquidation_value,
+        provenance, ...}], coverage, message, next_steps, client_guidance.
+    """
+    import json
+
+    from portfolio_analysis.account_nlv import get_account_nlv_series
+
+    return json.dumps(
+        get_account_nlv_series(
+            account,
+            broker=broker,
+            start_date=start_date,
+            end_date=end_date,
+            min_days=min_days,
+        ),
+        indent=2,
+    )
+
+
+def _is_known_security_ticker(symbol: str) -> bool:
+    """True if local GT has ever seen this as a security symbol (not an account id)."""
+    from portfolio_analysis.db import init_db
+
+    sym = (symbol or "").strip().upper()
+    if not sym:
+        return False
+    conn = init_db()
+    try:
+        for table, col in (
+            ("gt_account_positions", "symbol"),
+            ("gt_daily_positions", "symbol"),
+            ("gt_transactions", "symbol"),
+            ("gt_brokerage_statement_positions", "symbol"),
+        ):
+            row = conn.execute(
+                f"SELECT 1 FROM {table} WHERE UPPER({col}) = ? LIMIT 1",
+                (sym,),
+            ).fetchone()
+            if row:
+                return True
+        return False
+    finally:
+        conn.close()
+
+
+def _wrong_tool_if_account_query(query: str) -> str | None:
+    """Redirect ticker tools when the query is not a known security ticker.
+
+    Principle: if it does not resolve as a public/held security symbol, treat it
+    as a likely user account reference and send the client to
+    ``get_account_nlv_series_tool`` (never a silent all-zero position series).
+
+    Order:
+    1) Unique fund-account match (display_name / account_key / last-3) → hard redirect
+    2) Not a known security ticker in local GT → soft redirect with account candidates
+    3) Else None (proceed as ticker)
+    """
+    import json
+
+    from portfolio_analysis.account_nlv import (
+        get_account_nlv_series,
+        list_fund_accounts,
+        resolve_account,
+    )
+
+    resolved, cands, err = resolve_account(query)
+    if resolved is not None:
+        nlv = get_account_nlv_series(
+            resolved.account_key,
+            broker=resolved.broker,
+            min_days=None,
+        )
+        payload = {
+            "ok": False,
+            "reason": "wrong_tool_account_not_ticker",
+            "message": (
+                f"{query!r} resolves to fund account "
+                f"{resolved.display_name} ({resolved.broker}/{resolved.account_key}) "
+                f"via {resolved.match_via}. "
+                "This tool is for security tickers only (TSLA, SGOV, …). "
+                "For account NLV history / current account value call "
+                "get_account_nlv_series_tool."
+            ),
+            "resolved_account": {
+                "broker": resolved.broker,
+                "account_key": resolved.account_key,
+                "display_name": resolved.display_name,
+                "match_via": resolved.match_via,
+            },
+            "next_steps": [
+                (
+                    f"get_account_nlv_series_tool(account={query!r}) "
+                    "or account_key / display_name"
+                ),
+                "For a stock position series use a real ticker, e.g. symbol='TSLA'.",
+            ],
+            "account_nlv_preview": {
+                "ok": nlv.get("ok"),
+                "reason": nlv.get("reason"),
+                "series_len": len(nlv.get("series") or []),
+                "latest": (nlv.get("coverage") or {}).get("latest"),
+                "client_guidance": nlv.get("client_guidance"),
+            },
+            "hint_error": err,
+        }
+        return json.dumps(payload, indent=2)
+
+    # Not a unique account match — but also not a known security → likely account ref
+    if not _is_known_security_ticker(query):
+        accounts = list_fund_accounts()
+        payload = {
+            "ok": False,
+            "reason": "unknown_symbol_likely_account_reference",
+            "message": (
+                f"{query!r} is not a security ticker known in local portfolio GT. "
+                "If this is a user account reference (nickname, account_key, or "
+                "account-number suffix), use get_account_nlv_series_tool — not "
+                "position/TWRR ticker tools."
+            ),
+            "candidates": cands or accounts,
+            "next_steps": [
+                (
+                    f"get_account_nlv_series_tool(account={query!r}) "
+                    "if this names an account; or pick display_name/account_key "
+                    "from candidates"
+                ),
+                "For per-security quantity/TWRR pass a real ticker held in the "
+                "portfolio (e.g. TSLA, SGOV).",
+                "Optional: refresh_portfolio_data_tool then retry.",
+            ],
+            "client_guidance": {
+                "local_first": True,
+                "not_symbol_tool": True,
+                "likely_account_reference": True,
+                "outcome": "unknown_symbol_likely_account_reference",
+            },
+        }
+        return json.dumps(payload, indent=2)
+
+    return None
+
+
+@mcp.tool()
 def get_daily_positions_tool(
     symbol: str,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> str:
     """
-    Clean daily position quantity series for a symbol (anchored reconstruction).
+    Clean daily **share quantity** series for one **security ticker** (not an account).
+
+    Use for: "How many shares of TSLA did I hold each day?"
+    Do **not** use for account NLV / "account ending in 052" / IRA total value —
+    use ``get_account_nlv_series_tool`` instead.
+
+    If ``symbol`` uniquely matches a fund account (display_name, account_key, or
+    last-3 account digits), this tool refuses and returns JSON pointing at
+    ``get_account_nlv_series_tool`` instead of a fake all-zero quantity series.
 
     Uses the canonical `reconstruct_daily_position_quantities`:
     - Anchors to latest good gt_daily_positions snapshot
@@ -180,12 +393,21 @@ def get_daily_positions_tool(
     This is the data source used by the TWRR/OHLC/position chart bottom panel.
 
     Args:
-        symbol: Ticker (e.g. "AAPL", "AAPL").
+        symbol: Security ticker only (e.g. "TSLA", "SGOV", "NVDA").
+                Not an account number, account suffix, or account nickname.
         start_date, end_date: YYYY-MM-DD (defaults chosen from available data).
 
     Returns:
-        Markdown table of date,quantity (or a short message if no data).
+        Markdown table of date,quantity — or JSON redirect if symbol is an account,
+        or a short message if no position data for a real ticker.
+
+    Example: get_daily_positions_tool(symbol="TSLA", start_date="2026-05-29",
+             end_date="2026-07-28")
     """
+    redirect = _wrong_tool_if_account_query(symbol)
+    if redirect is not None:
+        return redirect
+
     df = reconstruct_daily_position_quantities(
         None,  # will open the default DB
         symbol.upper(),
@@ -193,7 +415,21 @@ def get_daily_positions_tool(
         end_date,
     )
     if df is None or df.empty:
-        return f"No position data for {symbol}."
+        return (
+            f"No position data for ticker {symbol!r}. "
+            "If you wanted account net liquidation value (IRA / account ending in "
+            "digits), call get_account_nlv_series_tool(account=...) instead."
+        )
+
+    # All-zero dense calendar is not a useful "held nothing" claim for unknown tickers
+    if "quantity" in df.columns and float(df["quantity"].abs().sum()) == 0.0:
+        return (
+            f"No non-zero holdings for ticker {symbol!r} in the requested window "
+            f"({len(df)} calendar rows all quantity=0). "
+            "This is not account NLV. For account value over time use "
+            f"get_account_nlv_series_tool. For a real security pass its ticker "
+            f"(e.g. TSLA)."
+        )
 
     # Nice small table
     lines = ["date | quantity", "---|---"]
@@ -211,14 +447,17 @@ def generate_twrr_ohlc_position_chart_tool(
     output: str | None = None,
 ) -> str:
     """
-    Generate the TWRR + OHLC + Position Size chart for a symbol (3-panel PNG).
+    Generate the TWRR + OHLC + Position Size chart for one **security ticker**.
+
+    Not for account-level NLV. For IRA / account total value over time use
+    ``get_account_nlv_series_tool(account=...)``.
 
     Bottom panel uses the clean anchored reconstruction (Journals ignored).
     When annotate_trades=True, Buy/Sell markers are overlaid (uses the enhanced
     generator from tools/generate_symbol_twrr_chart.py when available).
 
     Args:
-        symbol: Ticker.
+        symbol: Security ticker only (e.g. "TSLA"). Not an account id/suffix.
         start_date, end_date: YYYY-MM-DD range.
         annotate_trades: Overlay trade markers on the TWRR line.
         output: Explicit output PNG path (otherwise a timestamped file under
@@ -226,7 +465,14 @@ def generate_twrr_ohlc_position_chart_tool(
 
     Returns:
         Path to the generated PNG + a one-line status.
+
+    Example: generate_twrr_ohlc_position_chart_tool(symbol="TSLA",
+             start_date="2026-05-29", end_date="2026-07-28")
     """
+    redirect = _wrong_tool_if_account_query(symbol)
+    if redirect is not None:
+        return redirect
+
     out_path = Path(output) if output else None
 
     if annotate_trades and _enhanced_generate_symbol_chart is not None:
@@ -262,12 +508,13 @@ def upload_and_ingest_schwab_exports_tool(
     db_path: str | None = None,
 ) -> str:
     """
-    Upload one or more fresh Schwab export files (CSV content + original filename)
+    Upload one or more **new** Schwab export files (CSV content + original filename)
     and ingest them into the Ground Truth (gt_*) tables.
 
-    This is the primary way for MCP clients (such as the Grok app) to bring new
-    user-downloaded Schwab data (Positions, Transactions, Realized Gains, etc.)
-    into the system so that subsequent reports and charts reflect the latest exports.
+    Use only when the user has just downloaded files that are not already under
+    PORTFOLIO_ANALYSIS_HOME exports. This is NOT the path to a dense 60-day account
+    NLV series — for account value use get_account_nlv_series_tool (sparse anchors +
+    current NLV). Existing Account Statements on disk are seeded by data_refresh.
 
     Files are persisted under the standard schwab-exports directory (in a
     timestamped mcp-uploads/ subdir) so they remain available for manual
@@ -521,18 +768,86 @@ def connector_oauth_status_tool(broker: str = "schwab") -> str:
 
 
 @mcp.tool()
+def refresh_portfolio_data_tool(
+    broker: str | None = None,
+    force: bool = True,
+    demo: bool = False,
+    min_days: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    allow_reconstruct: bool = True,
+    on_insufficient: str = "partial",
+    background: bool = False,
+) -> str:
+    """Force the local-first hourly pipeline (same as scheduled data_refresh).
+
+    1) Sync remote broker → local GT cache (accounts, positions, equity as available)
+    2) Maximize local daily NLV from raw (every reconstructible market day from
+       earliest local raw through today; GT + reconstruction; provenance labeled)
+
+    After refresh, read account history with ``get_account_nlv_series_tool`` —
+    do not expect the broker to return a multi-day NLV API response here.
+
+    Concurrent with hourly job: second call returns already_running (no duplicate work).
+    Returns message, next_steps, client_guidance — serve current NLV and best-available
+    series from local DB; short history is coverage, not a hard service failure.
+    Never stamps today's live NAV onto past days.
+    background=true → run_id; poll jobs_status_tool(run_id=...).
+    """
+    import json
+
+    if background:
+        from portfolio_analysis.jobs.runner import start_job
+
+        out = start_job(
+            "data_refresh",
+            background=True,
+            trigger="mcp",
+            force=bool(force),
+            demo=bool(demo),
+            broker=broker,
+            min_days=min_days,
+            start_date=start_date,
+            end_date=end_date,
+            allow_reconstruct=bool(allow_reconstruct),
+            on_insufficient=on_insufficient or "partial",
+            maximize_history=min_days is None and start_date is None,
+        )
+        return json.dumps(out, indent=2)
+
+    from portfolio_analysis.jobs.pipeline import run_data_refresh
+
+    result = run_data_refresh(
+        broker=broker,
+        force=bool(force),
+        demo=bool(demo),
+        min_days=min_days,
+        start_date=start_date,
+        end_date=end_date,
+        allow_reconstruct=bool(allow_reconstruct),
+        on_insufficient=on_insufficient or "partial",
+        maximize_history=min_days is None and start_date is None,
+    )
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
 def sync_connectors_tool(
     brokers: list[str] | None = None,
     demo: bool = False,
     force: bool = False,
     min_interval_seconds: int = 0,
 ) -> str:
-    """One-shot broker connector → local GT sync (same as ``portfolio sync``).
+    """One-shot broker connector → local GT only (same as hourly connector_sync / CLI portfolio sync).
 
+    Prefer refresh_portfolio_data_tool when you also need daily net-liq derivatives.
     Sequential per broker/account. Conflict-free lock. Never fabricates balances.
-    For async poll pattern prefer jobs_run_tool(job_id='connector_sync').
+    Response includes message + next_steps for the client.
     """
-    from portfolio_analysis.sync import format_sync_result_json, run_sync
+    import json
+
+    from portfolio_analysis.jobs.client_messages import enrich_job_payload
+    from portfolio_analysis.sync import run_sync
 
     result = run_sync(
         brokers=brokers,
@@ -540,7 +855,8 @@ def sync_connectors_tool(
         force=force,
         min_interval_seconds=int(min_interval_seconds or 0),
     )
-    return format_sync_result_json(result)
+    payload = enrich_job_payload("connector_sync", result.to_public_dict())
+    return json.dumps(payload, indent=2)
 
 
 @mcp.tool()
@@ -575,11 +891,23 @@ def jobs_run_tool(
     force: bool = False,
     broker: str | None = None,
     min_interval_seconds: int = 0,
+    min_days: int | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    pre_sync: bool = False,
+    allow_reconstruct: bool = True,
+    on_insufficient: str = "fail",
 ) -> str:
     """Start a registered job. Default background=True returns run_id immediately.
 
     Poll with jobs_status_tool(run_id=...). Does not require a streaming MCP session.
-    job_id: connector_sync | daily_net_liq
+    job_id: data_refresh | connector_sync | daily_net_liq
+
+    data_refresh / daily_net_liq extras:
+      min_days / start_date / end_date — request-aware history window
+      pre_sync — daily_net_liq only: run connector_sync first
+      allow_reconstruct — fill gaps from positions/cash-flows (not live stamp)
+      on_insufficient — fail|partial when under min_days
     """
     import json
 
@@ -591,9 +919,34 @@ def jobs_run_tool(
         kwargs["min_interval_seconds"] = int(min_interval_seconds or 0)
         if broker:
             kwargs["brokers"] = [broker]
+    elif job_id == "data_refresh":
+        kwargs["demo"] = bool(demo)
+        if broker:
+            kwargs["broker"] = broker
+        if min_days is not None:
+            kwargs["min_days"] = int(min_days)
+        if start_date:
+            kwargs["start_date"] = start_date
+        if end_date:
+            kwargs["end_date"] = end_date
+        kwargs["allow_reconstruct"] = bool(allow_reconstruct)
+        kwargs["on_insufficient"] = on_insufficient or "partial"
+        kwargs["maximize_history"] = min_days is None and not start_date
     elif job_id == "daily_net_liq":
         if broker:
             kwargs["broker"] = broker
+        if min_days is not None:
+            kwargs["min_days"] = int(min_days)
+        if start_date:
+            kwargs["start_date"] = start_date
+        if end_date:
+            kwargs["end_date"] = end_date
+        kwargs["pre_sync"] = bool(pre_sync)
+        kwargs["allow_reconstruct"] = bool(allow_reconstruct)
+        kwargs["on_insufficient"] = on_insufficient or "fail"
+        kwargs["maximize_history"] = min_days is None and not start_date
+        if demo:
+            kwargs["demo"] = True
     out = start_job(
         job_id,
         background=bool(background),

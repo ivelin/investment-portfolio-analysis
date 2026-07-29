@@ -12,6 +12,7 @@ from typing import Any
 
 from portfolio_analysis.paths import ensure_instance_home
 
+from .client_messages import enrich_job_payload
 from .registry import get_job_runner, list_jobs
 from .status import (
     load_job_status,
@@ -117,6 +118,7 @@ def start_job(
                 "result": result,
                 "summary": result.get("summary"),
             }
+            finished = enrich_job_payload(job_id, finished)
             _finish(finished)
             return strip_secrets(finished)
         except Exception as exc:  # noqa: BLE001
@@ -127,6 +129,12 @@ def start_job(
                 "reason": "exception",
                 "error": str(exc),
                 "finished_at": utc_now_iso(),
+                "message": f"Job {job_id} raised: {exc}",
+                "next_steps": [
+                    "Read the error string (no secrets should appear).",
+                    "Retry jobs_run_tool with force=true, or refresh_portfolio_data_tool.",
+                    "Check journalctl --user -u portfolio-analysis for stack traces.",
+                ],
             }
             _finish(finished)
             return strip_secrets(finished)
@@ -154,6 +162,7 @@ def start_job(
                 "result": result,
                 "summary": result.get("summary"),
             }
+            finished = enrich_job_payload(job_id, finished)
             _finish(finished)
         except Exception as exc:  # noqa: BLE001
             finished = {
@@ -163,6 +172,11 @@ def start_job(
                 "reason": "exception",
                 "error": str(exc),
                 "finished_at": utc_now_iso(),
+                "message": f"Job {job_id} raised: {exc}",
+                "next_steps": [
+                    "Read the error string.",
+                    "Retry with force=true or refresh_portfolio_data_tool.",
+                ],
             }
             _finish(finished)
 
@@ -171,7 +185,15 @@ def start_job(
     pending = {
         **base,
         "state": "running",
-        "message": "job started; poll jobs_status with run_id",
+        "message": (
+            f"Job {job_id} started (run_id={run_id}). "
+            "Poll jobs_status_tool(run_id=...) until state is ok|failed|skipped. "
+            "Do not assume long history exists until daily_net_liq coverage says so."
+        ),
+        "next_steps": [
+            f"Call jobs_status_tool(run_id='{run_id}') until finished_at is set.",
+            "If this was connector_sync, next run daily_net_liq or use refresh_portfolio_data_tool.",
+        ],
     }
     write_run_status(run_id, pending)
     return strip_secrets(pending)

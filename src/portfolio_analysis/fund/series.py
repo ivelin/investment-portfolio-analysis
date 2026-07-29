@@ -278,16 +278,28 @@ def _build_index_rows(
 
 
 def _upsert_account(conn: sqlite3.Connection, acct: FundAccount) -> None:
+    # Optional last-3 digits of account number (never full number).
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(gt_fund_accounts)")}
+    if "account_number_last3" not in cols:
+        conn.execute(
+            "ALTER TABLE gt_fund_accounts ADD COLUMN account_number_last3 TEXT"
+        )
+    last3 = getattr(acct, "account_number_last3", None)
     conn.execute(
         """
         INSERT INTO gt_fund_accounts (
-            broker, account_key, display_name, currency, broker_account_ref, fund_symbol
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            broker, account_key, display_name, currency, broker_account_ref,
+            fund_symbol, account_number_last3
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(broker, account_key) DO UPDATE SET
             display_name = excluded.display_name,
             currency = excluded.currency,
             broker_account_ref = excluded.broker_account_ref,
-            fund_symbol = excluded.fund_symbol
+            fund_symbol = excluded.fund_symbol,
+            account_number_last3 = COALESCE(
+                excluded.account_number_last3,
+                gt_fund_accounts.account_number_last3
+            )
         """,
         (
             acct.broker.lower(),
@@ -296,6 +308,7 @@ def _upsert_account(conn: sqlite3.Connection, acct: FundAccount) -> None:
             acct.currency,
             acct.broker_account_ref,
             fund_symbol(acct.broker, acct.account_key),
+            last3,
         ),
     )
 

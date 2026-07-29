@@ -36,6 +36,8 @@ class LiveAccountEquity:
     currency: str = "USD"
     source: str = "live"
     positions: tuple[LivePosition, ...] = ()
+    # Last 3 digits only when the broker exposes a full account number (never full number).
+    account_number_last3: str | None = None
 
 
 class BrokerLiveSource(Protocol):
