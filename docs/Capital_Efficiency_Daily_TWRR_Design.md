@@ -1,3 +1,5 @@
+> **Note (2026-07):** This document is **historical product design**. The runtime is the multi-tenant app under `web/` (Neon). Paths under `src/portfolio_analysis/`, SQLite, and `SKILL.md` no longer exist in this repo.
+
 # Capital Efficiency Indicator: Daily TWRR Design Specification
 
 **Version:** 2.1 (Two-Phase Daily TWRR Population with Consistency Validation)

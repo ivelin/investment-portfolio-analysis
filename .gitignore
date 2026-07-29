@@ -1,138 +1,49 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+# Dependencies / build
+node_modules/
+web/node_modules/
+web/dist/
+web/.output/
+web/.tanstack/
+web/node_modules/.vite-test/
+web/screenshots/
 
-# C extensions
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-
-# Translations
-*.mo
-*.pot
-
-# Virtual environments
-.venv/
-venv/
-ENV/
-env/
-env.bak/
-venv.bak/
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# OS / editor junk
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
-*~
-
-# Project-specific generated / data
-schwab-exports/
-*.PDF
-*.pdf
-*.csv
-*.xml
-output/
-reports/
-
-# Local portfolio data, broker tokens, and secrets (never commit)
-# Canonical instance home: dot + repo dir name
-.investment-portfolio-analysis/
-**/.investment-portfolio-analysis/
-# Legacy instance home (pre public-repo rename)
-.portfolio-analysis/
-**/.portfolio-analysis/
-**/portfolio.db
-**/*.db-journal
-**/*.sqlite
-**/*.sqlite3
-.schwab/
-**/.schwab/
-**/tokens.json
-**/token.json
+# Vercel / env / secrets (never commit)
+.vercel/
+**/.vercel/
+.env
+.env.*
 **/.env
 **/.env.*
 !**/.env.example
-*.pem
-*.key
-*.p12
-*.pfx
+.env.local
+**/.env.local
+**/.env*.local
+**/db-bootstrap.secret.ts
+web/src/lib/db-bootstrap.secret.ts
 credentials*.json
 client_secret*.json
 secrets/
-# Unredacted personal export dumps (also covered by *.csv/*.xml/*.pdf above)
-# Never force-add real brokerage/tax exports into tests/fixtures/exports/
-tests/fixtures/exports/**/*.PDF
-tests/fixtures/exports/**/*.pdf
-# Accidental nested home-dir copies inside the worktree
-~/
+**/*.pem
 
-# Ruff (linter cache - appears when running ruff locally)
+# Logs / OS
+*.log
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Test / coverage
+coverage/
+.nyc_output/
+
+# Local agent / tooling
+.venv/
+__pycache__/
+.pytest_cache/
 .ruff_cache/
-
-# Generated report artifacts / ad-hoc report outputs
-# Report tools should write to user-writable locations (e.g. ~/.../reports/ or reports/ which is already ignored)
-# or take explicit --output paths outside the source tree. Never commit these.
-coverage_report_*.csv
-*report*.csv
-*report*.txt
-*report*.pdf
-*detailed*twrr*.txt
-twrr_report*.*
-# Ad-hoc chart PNGs dropped in the worktree (use instance reports/ instead)
-*_twrr*.png
-*_twrr_ohlc*.png
-*_chart*.png
-# Keep the reusable CLI helper (not a generated artifact)
-!tools/twrr_report.py
-ytd_report*.*
-aapl*report*.*
-weed*report*.*
+*.pyc
+web/coverage/

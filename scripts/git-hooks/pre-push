@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Blocks push unless full local CI is green (typecheck + suite + coverage ≥80%).
+# Install: make install-hooks
+# Escape hatch (documented): SKIP_CI=1 or SKIP_COVERAGE=1
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if [[ "${SKIP_CI:-}" == "1" ]]; then
+  echo "pre-push: SKIP_CI=1 — skipping make ci (not recommended)"
+  exit 0
+fi
+
+echo "pre-push: running make ci (web tests + coverage ≥80%)..."
+make ci
+echo "pre-push: make ci passed"

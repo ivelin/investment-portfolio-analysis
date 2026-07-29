@@ -1,42 +1,56 @@
-# Makefile - Local CI/CD commands for portfolio-analysis (uv-native)
+# Makefile — multi-tenant web app only
 #
-# This project uses uv. All commands go through `uv run` to ensure
-# the correct environment and dependencies are used.
+#   make ci              Required before every push
+#   make install-hooks   pre-push runs make ci
 
-.PHONY: help ci test lint format typecheck install-hooks
+.PHONY: help ci test lint typecheck install-hooks web-install
 
 help:
-	@echo "portfolio-analysis Local CI/CD (uv)"
+	@echo "investment-portfolio-analysis (multi-tenant web)"
 	@echo ""
-	@echo "  make ci            Run full local CI (recommended before every PR)"
-	@echo "  make test          Run full pytest suite under tests/ (incl. MCP)"
-	@echo "  make lint          Run linters"
-	@echo "  make format        Auto-format code"
-	@echo "  make typecheck     Run mypy"
-	@echo "  make install-hooks Install pre-commit hooks"
+	@echo "  make ci              typecheck + tests + coverage ≥80% + e2e"
+	@echo "  make coverage        c8 gate only (unit+api+mcp)"
+	@echo "  make test            all web suites (no coverage gate)"
+	@echo "  make typecheck       web tsc"
+	@echo "  make web-install     npm ci in web/"
+	@echo "  make install-hooks   pre-push → make ci"
+	@echo "  SKIP_COVERAGE=1      escape hatch for make ci (documented)"
 	@echo ""
-	@echo "All commands use 'uv run' for environment isolation."
 
-ci: lint typecheck test
-	@echo "✅ Local CI passed"
+ci:
+	@echo "=== Web: install (if needed) ==="
+	@if [ ! -d web/node_modules ]; then (cd web && npm ci); fi
+	@echo "=== Web: typecheck + tests + coverage ≥80% ==="
+	@if [ "$${SKIP_COVERAGE}" = "1" ]; then \
+		echo "WARNING: SKIP_COVERAGE=1 — coverage gate disabled"; \
+		cd web && npm run typecheck && npm test; \
+	else \
+		cd web && npm run ci; \
+	fi
+	@echo ""
+	@echo "✅ CI passed (coverage gate). Safe to push."
 
 test:
-	@echo "Running full pytest suite..."
-	uv run pytest tests/ -q --tb=short
+	@if [ ! -d web/node_modules ]; then (cd web && npm ci); fi
+	cd web && npm test
 
-lint:
-	@echo "Running ruff..."
-	uv run ruff check .
-	uv run ruff format --check .
-
-format:
-	uv run ruff format .
-	uv run ruff check --fix .
+coverage:
+	@if [ ! -d web/node_modules ]; then (cd web && npm ci); fi
+	cd web && npm run test:coverage
 
 typecheck:
-	@echo "Running mypy..."
-	uv run --extra dev mypy --explicit-package-bases src/ --ignore-missing-imports --no-error-summary || echo "⚠️ mypy reported issues (many pre-existing in tree; focused on new code via other gates). Job will not fail the build."
+	@if [ ! -d web/node_modules ]; then (cd web && npm ci); fi
+	cd web && npm run typecheck
+
+lint:
+	@if [ ! -d web/node_modules ]; then (cd web && npm ci); fi
+	cd web && npm run lint
+
+web-install:
+	cd web && npm ci
 
 install-hooks:
-	uv run pre-commit install
-	@echo "✅ Pre-commit hooks installed. They will run on every commit."
+	@mkdir -p .git/hooks
+	@cp scripts/git-hooks/pre-push .git/hooks/pre-push
+	@chmod +x .git/hooks/pre-push
+	@echo "✅ pre-push hook installed (runs make ci)"

@@ -2,65 +2,53 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**", "chore/**"]
+    branches: [main, "feat/**", "feature/**", "fix/**", "chore/**"]
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-and-test:
+  web:
+    name: web (typecheck + suite)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          enable-cache: true
-          cache-dependency-glob: |
-            **/pyproject.toml
-            **/uv.lock
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
-      - name: Set up Python
-        run: uv python install 3.11
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Install project (dev + runtime + mcp)
-        run: |
-          uv sync --all-groups --extra dev --extra mcp
-          uv pip install -e ".[dev,mcp]"
+      - name: Typecheck
+        run: npm run typecheck
 
-      - name: Ruff check
-        run: uv run ruff check .
-
-      - name: Ruff format check
-        run: uv run ruff format --check .
-
-      - name: Pytest (full suite)
-        run: uv run pytest tests/ -q --tb=short
+      - name: Test suite + coverage ≥80% (critical include set)
+        run: npm run test:coverage
         env:
-          # Force an isolated empty path so optional live-DB regressions skip cleanly.
-          PORTFOLIO_ANALYSIS_DB_PATH: ${{ runner.temp }}/ci-empty-portfolio.db
+          CI: true
 
-      - name: MCP server smoke (stdio mode for reliability)
-        run: |
-          uv run --extra mcp python -c "
-          import asyncio
-          from mcp import ClientSession, StdioServerParameters
-          from mcp.client.stdio import stdio_client
-          async def smoke():
-              server_params = StdioServerParameters(
-                  command='uv',
-                  args=['run', '--extra', 'mcp', 'python', '-m', 'portfolio_analysis.mcp_server'],
-              )
-              async with stdio_client(server_params) as (read, write):
-                  async with ClientSession(read, write) as session:
-                      await session.initialize()
-                      tools = await session.list_tools()
-                      names = [t.name for t in tools.tools]
-                      print('MCP tools available:', names)
-                      assert 'get_ytd_twrr_pl_table_tool' in names
-                      assert 'get_daily_positions_tool' in names
-                      assert 'upload_and_ingest_schwab_exports_tool' in names
-                      print('MCP smoke test passed')
-          asyncio.run(smoke())
-          "
+      - name: E2E entry (home + login) or documented skip
+        run: npm run test:e2e
+        env:
+          CI: true
+          COVERAGE_SCRATCH: ${{ runner.temp }}/e2e-scratch
+
+      - name: Upload coverage summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage-summary
+          path: web/coverage/coverage-summary.json
+          if-no-files-found: ignore

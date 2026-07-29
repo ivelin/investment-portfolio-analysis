@@ -1,3 +1,5 @@
+> **Note (2026-07):** This document is **historical product design**. The runtime is the multi-tenant app under `web/` (Neon). Paths under `src/portfolio_analysis/`, SQLite, and `SKILL.md` no longer exist in this repo.
+
 # Daily Time-Weighted Rate of Return (TWRR) Implementation Plan
 
 **Version:** 1.1
