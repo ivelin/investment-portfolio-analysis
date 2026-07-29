@@ -11,6 +11,7 @@ const vite = await createServer({
 try {
   const { getAuthRuntimeStatus, pgliteUsableInThisRuntime } =
     await vite.ssrLoadModule("/src/lib/auth/auth-runtime-status.ts");
+  const { hasDatabaseUrl } = await vite.ssrLoadModule("/src/lib/db-url.ts");
 
   assert.equal(pgliteUsableInThisRuntime(), true, "sandbox runtime must allow PGLite");
 
@@ -34,20 +35,23 @@ try {
   );
   assert.equal(publishedHostInSandbox.issues.length, 0);
 
-  // Simulate real Vercel serverless: PGLite unusable + published host + no env
+  // Simulate real Vercel serverless: PGLite unusable
   const prevVercel = process.env.VERCEL;
   const prevVercelEnv = process.env.VERCEL_ENV;
   process.env.VERCEL = "1";
   process.env.VERCEL_ENV = "production";
-  // Re-import is hard; call with env already set — pgliteUsable reads env live
-  const { getAuthRuntimeStatus: getStatus2, pgliteUsableInThisRuntime: pglite2 } =
-    await vite.ssrLoadModule("/src/lib/auth/auth-runtime-status.ts?t=" + Date.now());
-  // Module may be cached; pgliteUsableInThisRuntime reads process.env each call
   assert.equal(pgliteUsableInThisRuntime(), false, "VERCEL=1 must disable PGLite");
   const vercelPublished = getAuthRuntimeStatus("my-app.grok.me");
   assert.equal(vercelPublished.hostKind, "published");
-  assert.equal(vercelPublished.publishLikelyBroken, true);
-  assert.ok(vercelPublished.issues.some((i) => /database/i.test(i)));
+  assert.equal(vercelPublished.pgliteUsable, false);
+  if (hasDatabaseUrl()) {
+    // Sandbox may carry a gitignored Neon bootstrap — DB is then OK.
+    assert.equal(vercelPublished.database, "neon");
+    assert.ok(!vercelPublished.issues.some((i) => /database/i.test(i)));
+  } else {
+    assert.equal(vercelPublished.publishLikelyBroken, true);
+    assert.ok(vercelPublished.issues.some((i) => /database/i.test(i)));
+  }
   if (prevVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = prevVercel;
   if (prevVercelEnv === undefined) delete process.env.VERCEL_ENV;

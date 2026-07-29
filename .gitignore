@@ -139,3 +139,5 @@ ytd_report*.*
 aapl*report*.*
 weed*report*.*
 web/node_modules/
+
+**/db-bootstrap.secret.ts

@@ -11,3 +11,6 @@ data/
 screenshots/
 artifacts/
 attachments/
+
+# Sandbox-only Neon bootstrap — never commit
+src/lib/db-bootstrap.secret.ts
