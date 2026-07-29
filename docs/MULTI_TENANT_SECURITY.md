@@ -45,3 +45,19 @@ Background token refresh must:
 2. Write refreshed tokens only to that same tenant.
 3. Never batch tokens into a shared process cache keyed only by broker.
 4. Log redacted outcomes only (`connector.token_refreshed` / `token_refresh_failed`).
+
+## OAuth session bind (account-linking CSRF)
+
+Callback must:
+
+1. Load `broker_oauth_states` by `state` + broker (tenant from row only).
+2. Require an authenticated browser session whose `user_id` equals `state.user_id`.
+3. On mismatch: reject, audit `connector.oauth_bind_rejected`, do not seal tokens.
+4. On match: one-shot consume state, seal tokens under that `tenant_id` only.
+
+## Intended use (self-management)
+
+- Retail investors analyzing **their own** accounts.
+- **Not** investment advice.
+- **Not** for RIAs / advisors / professional client services.
+- Product must not ship features that manage third-party client money under one operator login without a separate approved product mode.

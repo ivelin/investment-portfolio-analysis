@@ -125,3 +125,7 @@ Pure decision matrix (for tests / implementers):
 - **DRY:** one decision helper for token refresh (`skip` | `refresh` | `needs_reauth`); one tenant boundary for web + MCP.
 - **MECE status labels** for connectors and jobs — no overlapping states.
 - **Path to success:** product UI never dead-ends; setup guides complete the OAuth callback flow.
+
+## Session-bound OAuth callback
+
+`state` binds `tenant_id` + `user_id`. Callback requires session user == state user before token seal (CSRF / confused-deputy defense). Shared platform Schwab app credentials do not share user portfolios.
