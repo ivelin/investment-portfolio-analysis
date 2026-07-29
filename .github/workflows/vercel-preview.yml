@@ -52,8 +52,8 @@ jobs:
           node-version: "22"
 
       - name: Install Vercel CLI
-        # Endpoint requires >= 47.2.2 (CLI deploy API)
-        run: npm install -g vercel@47.2.2
+        # Deploy API requires a recent CLI (message mentioned >= 47.2.2)
+        run: npm install -g vercel@latest
 
       - name: Require secrets
         run: |
