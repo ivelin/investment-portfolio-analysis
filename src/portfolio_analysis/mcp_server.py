@@ -244,43 +244,52 @@ def get_account_nlv_series_tool(
     )
 
 
-def _is_known_security_ticker(symbol: str) -> bool:
-    """True if local GT has ever seen this as a security symbol (not an account id)."""
-    from portfolio_analysis.db import init_db
+def _looks_like_public_ticker(symbol: str) -> bool:
+    """Heuristic: classic equity/option-ish security symbols (not account ids)."""
+    import re
 
-    sym = (symbol or "").strip().upper()
-    if not sym:
+    s = (symbol or "").strip().upper()
+    if not s:
         return False
-    conn = init_db()
-    try:
-        for table, col in (
-            ("gt_account_positions", "symbol"),
-            ("gt_daily_positions", "symbol"),
-            ("gt_transactions", "symbol"),
-            ("gt_brokerage_statement_positions", "symbol"),
-        ):
-            row = conn.execute(
-                f"SELECT 1 FROM {table} WHERE UPPER({col}) = ? LIMIT 1",
-                (sym,),
-            ).fetchone()
-            if row:
-                return True
+    # Equity tickers: 1–5 letters (AAPL, TSLA, BRK.B → allow one dot)
+    if re.fullmatch(r"[A-Z]{1,5}(\.[A-Z])?", s):
+        return True
+    # OSI-ish / spaced option roots
+    if re.fullmatch(r"[A-Z]{1,6}\s+\d{6}[CP]\d+", s):
+        return True
+    if re.search(r"\d{2}/\d{2}/\d{4}", s) and re.search(r"[A-Z]{1,6}", s):
+        return True
+    return False
+
+
+def _looks_like_account_reference(query: str) -> bool:
+    """Account keys, last-3 digits, nicknames — not public tickers."""
+    import re
+
+    s = (query or "").strip()
+    if not s:
         return False
-    finally:
-        conn.close()
+    if _looks_like_public_ticker(s):
+        return False
+    # last-3 / short digit account masks
+    if re.fullmatch(r"\d{2,4}", s):
+        return True
+    # opaque account_key hex-ish
+    if re.fullmatch(r"[0-9a-f]{8,16}", s, re.I):
+        return True
+    # multi-word nicknames (Active Trading IRA)
+    if " " in s or "-" in s:
+        return True
+    return False
 
 
 def _wrong_tool_if_account_query(query: str) -> str | None:
-    """Redirect ticker tools when the query is not a known security ticker.
-
-    Principle: if it does not resolve as a public/held security symbol, treat it
-    as a likely user account reference and send the client to
-    ``get_account_nlv_series_tool`` (never a silent all-zero position series).
+    """Redirect ticker tools when the query is an account reference.
 
     Order:
-    1) Unique fund-account match (display_name / account_key / last-3) → hard redirect
-    2) Not a known security ticker in local GT → soft redirect with account candidates
-    3) Else None (proceed as ticker)
+    1) Unique fund-account match → hard redirect with NLV preview
+    2) Account-like query that is not a public ticker shape → soft redirect
+    3) Public ticker shape (AAPL, TSLA, …) → proceed even if not yet in local GT
     """
     import json
 
@@ -332,17 +341,15 @@ def _wrong_tool_if_account_query(query: str) -> str | None:
         }
         return json.dumps(payload, indent=2)
 
-    # Not a unique account match — but also not a known security → likely account ref
-    if not _is_known_security_ticker(query):
+    # Soft redirect only for account-shaped queries (not AAPL/TSLA/…)
+    if _looks_like_account_reference(query):
         accounts = list_fund_accounts()
         payload = {
             "ok": False,
             "reason": "unknown_symbol_likely_account_reference",
             "message": (
-                f"{query!r} is not a security ticker known in local portfolio GT. "
-                "If this is a user account reference (nickname, account_key, or "
-                "account-number suffix), use get_account_nlv_series_tool — not "
-                "position/TWRR ticker tools."
+                f"{query!r} looks like a user account reference, not a public "
+                "security ticker. Use get_account_nlv_series_tool for account NLV."
             ),
             "candidates": cands or accounts,
             "next_steps": [
@@ -351,9 +358,7 @@ def _wrong_tool_if_account_query(query: str) -> str | None:
                     "if this names an account; or pick display_name/account_key "
                     "from candidates"
                 ),
-                "For per-security quantity/TWRR pass a real ticker held in the "
-                "portfolio (e.g. TSLA, SGOV).",
-                "Optional: refresh_portfolio_data_tool then retry.",
+                "For per-security quantity/TWRR pass a real ticker (e.g. TSLA, SGOV).",
             ],
             "client_guidance": {
                 "local_first": True,

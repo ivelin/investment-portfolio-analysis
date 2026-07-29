@@ -145,39 +145,29 @@ def test_symbol_tools_redirect_when_query_is_account(isolated_home: Path):
 
 
 def test_unknown_non_ticker_soft_redirect_to_account_tools(isolated_home: Path):
-    """If not a known security ticker, treat as likely account reference."""
+    """Account-shaped queries soft-redirect; public tickers still proceed."""
     conn = init_db()
     try:
         _seed_accounts(conn)
-        # Real ticker with no positions still "known" if we insert a position row
-        conn.execute(
-            """
-            INSERT INTO gt_account_positions (
-                broker, account_key, as_of_date, symbol, quantity, source
-            ) VALUES ('schwab', '47a915ae0e7e', '2026-07-28', 'TSLA', 1.0, 'test')
-            """
-        )
-        conn.commit()
     finally:
         conn.close()
 
     from portfolio_analysis import mcp_server
 
-    # Not in GT as security and not unique account match
-    body = mcp_server.get_daily_positions_tool(symbol="NOTATICKER99")
+    # Account-shaped, not unique resolve → soft redirect
+    body = mcp_server.get_daily_positions_tool(symbol="Mystery Account Nickname")
     data = json.loads(body)
     assert data["ok"] is False
     assert data["reason"] == "unknown_symbol_likely_account_reference"
     assert data["client_guidance"]["likely_account_reference"] is True
     assert "get_account_nlv_series_tool" in data["message"]
 
-    # Known security ticker may proceed (no hard account redirect)
+    # Public ticker shape must NOT soft-redirect even if absent from empty GT
     body2 = mcp_server.get_daily_positions_tool(
-        symbol="TSLA",
+        symbol="AAPL",
         start_date="2026-07-01",
         end_date="2026-07-28",
     )
-    # either a table or zero-holdings prose — not the account-redirect reasons
     if body2.strip().startswith("{"):
         d2 = json.loads(body2)
         assert d2.get("reason") not in (
@@ -185,7 +175,7 @@ def test_unknown_non_ticker_soft_redirect_to_account_tools(isolated_home: Path):
             "unknown_symbol_likely_account_reference",
         )
     else:
-        assert "date | quantity" in body2 or "No " in body2
+        assert "date | quantity" in body2 or "No " in body2 or "AAPL" in body2
 
 
 def test_scheduler_data_refresh_maximizes_history():
