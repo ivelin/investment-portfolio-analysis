@@ -7,7 +7,7 @@
 - **Future option**: DuckDB can be used as an analytical query layer on top of the SQLite files
 
 ## Development Workflow
-- All new work happens in the dedicated repository: `ivelin/portfolio-analysis`
+- All new work happens in the dedicated repository: `ivelin/investment-portfolio-analysis`
 - Feature development, tests, and debugging are delegated via **grok-build**
 - The skill in `~/.hermes/skills/` is symlinked to the repo for zero duplication
 
@@ -42,3 +42,19 @@ Only reconsider live API/MCP if:
 This decision establishes a clear architectural direction for the evolution of the skill.
 
 This document captures the deliberate architectural choices made after evaluating live API vs file-based approaches.
+
+## Multi-tenant hosted platform (2026-07)
+
+- **Decision**: Hosted product on grok.me is **multi-tenant** with Neon Postgres,
+  Better Auth (Grok broker), REST + MCP APIs, and a full-stack web dashboard.
+  Local skill mode (SQLite under `PORTFOLIO_ANALYSIS_HOME`) remains fully supported.
+- **Branch**: `feature/multi-tenant-platform`
+- **Canonical docs**: [docs/MULTI_TENANT_ARCHITECTURE.md](../docs/MULTI_TENANT_ARCHITECTURE.md),
+  [docs/MULTI_TENANT_SECURITY.md](../docs/MULTI_TENANT_SECURITY.md)
+- **Hard rules**:
+  - Public repo must never contain real balances, tokens, exports, or PII.
+  - Every hosted portfolio row is scoped by `tenant_id` + membership check.
+  - Demo/synthetic data only until a tenant connects their own sources.
+  - Connector secrets are encrypted at rest and never returned by APIs.
+- **Rationale**: Local MCP is single-operator; hosting requires auth, isolation,
+  and a scalable DB while preserving ground-truth integrity philosophy.
