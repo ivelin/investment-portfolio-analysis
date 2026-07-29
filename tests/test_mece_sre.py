@@ -32,9 +32,7 @@ def classify_refresh_action(
     return "refresh"
 
 
-def classify_connector_ui(
-    status: str, oauth_configured: bool
-) -> str:
+def classify_connector_ui(status: str, oauth_configured: bool) -> str:
     if status == "connected":
         return "connected"
     if status == "error":
@@ -97,7 +95,15 @@ def test_cta_never_dead_ends_without_path():
 
 def test_docs_require_sre_and_dry():
     text = ARCH.read_text(encoding="utf-8")
-    for needle in ("SRE", "CI", "DRY", "MECE", "token_refresh", "fail closed", "tenant"):
+    for needle in (
+        "SRE",
+        "CI",
+        "DRY",
+        "MECE",
+        "token_refresh",
+        "fail closed",
+        "tenant",
+    ):
         assert needle.lower() in text.lower(), needle
 
 
