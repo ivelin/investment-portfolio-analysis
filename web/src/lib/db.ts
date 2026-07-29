@@ -1,18 +1,22 @@
+import { resolveDatabaseUrl } from "./db-url";
+import { pgliteUsableInThisRuntime } from "./runtime-env";
+
 /** Which database backend is active. */
 export type DbSource = "neon" | "pglite";
 
 // An empty/whitespace DATABASE_URL (an easy misconfig in deploy UIs) must mean
 // "unset" — otherwise production would silently run on the PGLite fallback.
-const rawDatabaseUrl =
-  typeof process !== "undefined" ? process.env.DATABASE_URL : undefined;
-const databaseUrl =
-  rawDatabaseUrl && rawDatabaseUrl.trim() ? rawDatabaseUrl : undefined;
+// Also accept common Postgres/Neon marketplace aliases (see db-url.ts).
+const databaseUrl = resolveDatabaseUrl();
 
 /**
- * Active backend: real **Neon** when `DATABASE_URL` is set (deployed / configured
- * sandbox), otherwise a local embedded **PGLite** (Postgres compiled to WASM) so
- * the app has a working database even with nothing configured — the live preview
- * included. Swap in Neon later by just setting `DATABASE_URL`; no code changes.
+ * Active backend: real **Neon** when `DATABASE_URL` (or alias) is set (deployed),
+ * otherwise a local embedded **PGLite** (Postgres compiled to WASM) so the app
+ * has a working database in the live preview. Swap in Neon by setting
+ * `DATABASE_URL`; no code changes.
+ *
+ * On serverless (Vercel) without a URL, we still report `pglite` as the *intent*
+ * but refuse to boot PGLite — it cannot persist and the WASM assets 500.
  */
 export const dbSource: DbSource = databaseUrl ? "neon" : "pglite";
 
@@ -192,6 +196,15 @@ function createNeonSql(): Promise<Sql> {
 }
 
 async function createPgliteSql(): Promise<Sql> {
+  // Fail closed on serverless: PGLite WASM assets are not available under
+  // /var/task and in-memory state cannot span OAuth redirects across isolates.
+  if (!pgliteUsableInThisRuntime()) {
+    throw new Error(
+      "No DATABASE_URL on serverless deploy. Published sign-in requires Postgres (Neon). " +
+        "PGLite is only for the live preview / local dev server.",
+    );
+  }
+
   // Embedded Postgres, imported on demand so it never loads on the Neon path.
   // One in-memory instance per process, shared across HMR module instances, so
   // data survives source edits (it resets on dev-server restart).
@@ -283,6 +296,11 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
   if (dbSource !== "pglite") {
     throw new Error("getPglite() is only available on the PGLite fallback (no DATABASE_URL)");
   }
+  if (!pgliteUsableInThisRuntime()) {
+    throw new Error(
+      "PGLite is not available on serverless. Set DATABASE_URL (Neon) for published deploys.",
+    );
+  }
   await getSql();
   const pg = await globalRef.__pgliteInstance__;
   if (!pg) throw new Error("PGLite instance failed to initialize");
@@ -294,30 +312,35 @@ export async function getPglite(): Promise<import("@electric-sql/pglite").PGlite
  *
  * - **PGLite** (preview / no `DATABASE_URL`): open the in-memory DB and apply
  *   `migrations/*.sql`. Idempotent — concurrent callers share one promise.
- * - **Neon** (`DATABASE_URL` set): open the pool and apply pending migrations
- *   (covers deploy when migrate ran without URL, or runtime-only injection).
+ * - **Neon** (`DATABASE_URL` set): open the pool and apply pending migrations.
+ * - **Serverless without URL**: resolves immediately (callers fail on first query
+ *   with a clear error — do not load PGLite WASM).
  *
  * Vite `configureServer` awaits this at dev startup; production imports of this
  * module kick it off immediately (see bottom of file).
  */
 export function ensureDbReady(): Promise<void> {
+  if (dbSource === "pglite" && !pgliteUsableInThisRuntime()) {
+    return Promise.resolve();
+  }
   return getSql().then(() => undefined);
 }
 
 // Server-only eager start: kick DB bootstrap as soon as this module loads in
 // Node. Client bundles never hit this path (`getSql` throws in the browser).
-// Preview always boots PGLite; deployed Neon boots the pool + migrations when
-// DATABASE_URL is present (no-op cost if the first request races it).
+// Skip on serverless without URL (would only crash on missing pglite.data).
 const globalBoot = globalThis as typeof globalThis & {
   __pgBootstrapPromise__?: Promise<void>;
 };
-if (typeof window === "undefined") {
+if (
+  typeof window === "undefined" &&
+  (dbSource === "neon" || pgliteUsableInThisRuntime())
+) {
   globalBoot.__pgBootstrapPromise__ ??= ensureDbReady().catch((err) => {
     globalBoot.__pgBootstrapPromise__ = undefined;
     console.error(
       dbSource === "neon" ? "[db] Neon bootstrap failed:" : "[db] PGLite bootstrap failed:",
       err,
     );
-    // Don't rethrow from fire-and-forget boot — first getSql()/handler will surface it.
   });
 }

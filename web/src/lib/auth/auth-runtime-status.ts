@@ -1,3 +1,6 @@
+import { databaseEnvPresence, hasDatabaseUrl } from "../db-url";
+import { pgliteUsableInThisRuntime } from "../runtime-env";
+
 export type AuthMode = "preview_client" | "deployed_client" | "disabled";
 export type HostKind = "sandbox" | "published" | "local" | "unknown";
 export type DatabaseMode = "neon" | "pglite";
@@ -18,9 +21,13 @@ export type AuthRuntimeStatus = {
    * cannot persist across invocations.
    */
   pgliteUsable: boolean;
+  /** Which known DB env *keys* are set (boolean only — never values). */
+  databaseEnv: Record<string, boolean>;
   issues: string[];
   hint: string;
 };
+
+export { pgliteUsableInThisRuntime };
 
 function classifyHost(host: string | null): HostKind {
   if (!host) return "unknown";
@@ -44,26 +51,6 @@ function classifyHost(host: string | null): HostKind {
   return "unknown";
 }
 
-/**
- * PGLite is only viable in a long-lived Node process (Grok sandbox live preview
- * or local `npm run dev`). On Vercel/serverless the isolate dies after each
- * request, so a missing DATABASE_URL is a hard production failure.
- *
- * Important: the live-preview proxy sometimes forwards `Host` /
- * `x-forwarded-host` as the *published* `*.grok.me` name while the process is
- * still the sandbox. Host alone must not decide that PGLite is unusable.
- */
-export function pgliteUsableInThisRuntime(): boolean {
-  if (process.env.VERCEL) return false;
-  if (process.env.VERCEL_ENV) return false;
-  if (process.env.AWS_LAMBDA_FUNCTION_NAME) return false;
-  if (process.env.NETLIFY) return false;
-  // Grok app-builder sandbox always has this marker and never sets VERCEL.
-  if (process.env.GROK_AGENT || process.env.SANDBOX_SERVICE_ENV) return true;
-  // Local / unknown long-lived Node — allow PGLite.
-  return true;
-}
-
 function authMode(): AuthMode {
   if (process.env.VITE_AUTH_ENABLED === "false") return "disabled";
   if (process.env.GROK_AUTH_CLIENT_ID && process.env.GROK_AUTH_CLIENT_SECRET) {
@@ -73,8 +60,7 @@ function authMode(): AuthMode {
 }
 
 function databaseMode(): DatabaseMode {
-  const url = process.env.DATABASE_URL?.trim();
-  return url ? "neon" : "pglite";
+  return hasDatabaseUrl() ? "neon" : "pglite";
 }
 
 /**
@@ -85,6 +71,7 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
   const mode = authMode();
   const database = databaseMode();
   const pgliteUsable = pgliteUsableInThisRuntime();
+  const databaseEnv = databaseEnvPresence();
   const hasBetterAuthUrl = Boolean(
     process.env.BETTER_AUTH_URL?.trim() || process.env.APP_PUBLIC_URL?.trim(),
   );
@@ -134,6 +121,7 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
     hostKind,
     publishLikelyBroken,
     pgliteUsable,
+    databaseEnv,
     issues,
     hint: pgliteUsable
       ? "Live preview / local: PGLite + preview (or injected) auth client. Published serverless needs GROK_AUTH_*, BETTER_AUTH_*, and DATABASE_URL."

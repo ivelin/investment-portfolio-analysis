@@ -34,6 +34,8 @@ import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
 import { dbSource, ensureDbReady, getPgPool, getPglite } from "../db";
+import { resolveDatabaseUrl } from "../db-url";
+import { pgliteUsableInThisRuntime } from "../runtime-env";
 import { emailAndPasswordEnabled } from "./email-password";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
@@ -45,7 +47,8 @@ import {
 } from "./preview";
 
 // Kick (and share) DB bootstrap as soon as the auth server module loads.
-// Neon: pool + migrations. PGLite: embedded DB + migrations.
+// Neon: pool + migrations. PGLite: embedded DB + migrations (preview only).
+// Serverless without DATABASE_URL: ensureDbReady is a no-op (no PGLite crash).
 void ensureDbReady();
 
 /**
@@ -103,10 +106,18 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
+// Published Grok apps: also trust the concrete https origin when injected.
 const baseURL = explicitBaseURL ?? {
   // Include loopback hosts so dynamic baseURL resolves for local email/password
-  // (not only the preview wildcard).
-  allowedHosts: [...previewAllowedHosts, "localhost", "127.0.0.1", "[::1]"],
+  // (not only the preview wildcard). Also allow *.grok.me so published Host
+  // headers forwarded into preview still form a valid redirect_uri family.
+  allowedHosts: [
+    ...previewAllowedHosts,
+    "localhost",
+    "127.0.0.1",
+    "[::1]",
+    "*.grok.me",
+  ],
   // `auto` → trust both http:// and https:// expansions of allowedHosts
   // (preview is https; local dev is http).
   protocol: "auto" as const,
@@ -116,16 +127,18 @@ const baseURL = explicitBaseURL ?? {
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
 const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS]
+  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS, "https://*.grok.me"]
   : [
       // Host wildcards (matched against Origin's host)
       ...previewAllowedHosts,
+      "*.grok.me",
       // Full-origin wildcards (matched against Origin)
       ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+      "https://*.grok.me",
       ...LOCAL_DEV_ORIGINS,
     ];
 
-const databaseUrl = env("DATABASE_URL");
+const databaseUrl = resolveDatabaseUrl();
 
 // Static broker OAuth endpoints (skip OIDC discovery on every sign-in / callback).
 // Discovery would cost an extra network hop to the broker before the popup can
@@ -141,54 +154,76 @@ const grokUserInfoUrl = `${issuerBase}/api/auth/oauth2/userinfo`;
  *
  * Neon: shared Pool from `@/lib/db` (same process pool + migrations as app SQL).
  * We hand a thenable-backed Pool proxy so the first auth query awaits migrations.
- * PGLite: Kysely dialect over the embedded instance (same DB as app data).
+ * PGLite: Kysely dialect over the embedded instance (preview only).
+ * Serverless without DATABASE_URL: throw on first use (never load broken PGLite).
  */
 function createAuthDatabase():
   | import("pg").Pool
   | { dialect: ReturnType<typeof pgliteDialect>; type: "postgres" } {
-  if (!databaseUrl) {
-    return { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
+  if (databaseUrl) {
+    // Lazy proxy: Better Auth calls pool.query/connect on demand. We resolve the
+    // shared migrated pool once, then forward. Avoids a second un-migrated Pool.
+    const target = { pool: null as import("pg").Pool | null };
+    const resolve = async () => {
+      target.pool ??= await getPgPool();
+      return target.pool;
+    };
+    globalAuthRef.__grokAuthReady__ ??= resolve().then(() => undefined);
+
+    const handler: ProxyHandler<import("pg").Pool> = {
+      get(_t, prop, receiver) {
+        if (prop === "then") return undefined; // not a Promise
+        if (prop === "query") {
+          return async (...args: unknown[]) => {
+            const pool = await resolve();
+            return (pool.query as (...a: unknown[]) => unknown)(...args);
+          };
+        }
+        if (prop === "connect") {
+          return async (...args: unknown[]) => {
+            const pool = await resolve();
+            return (pool.connect as (...a: unknown[]) => unknown)(...args);
+          };
+        }
+        if (prop === "end") {
+          return async (...args: unknown[]) => {
+            if (!target.pool) return;
+            return target.pool.end(...(args as []));
+          };
+        }
+        // Sync property reads (e.g. totalCount) after pool exists; otherwise 0/undefined.
+        if (target.pool) {
+          const value = Reflect.get(target.pool, prop, receiver);
+          return typeof value === "function" ? value.bind(target.pool) : value;
+        }
+        return undefined;
+      },
+    };
+    return new Proxy({} as import("pg").Pool, handler);
   }
 
-  // Lazy proxy: Better Auth calls pool.query/connect on demand. We resolve the
-  // shared migrated pool once, then forward. Avoids a second un-migrated Pool.
-  const target = { pool: null as import("pg").Pool | null };
-  const resolve = async () => {
-    target.pool ??= await getPgPool();
-    return target.pool;
-  };
-  globalAuthRef.__grokAuthReady__ ??= resolve().then(() => undefined);
+  if (!pgliteUsableInThisRuntime()) {
+    // Serverless without DATABASE_URL — do not construct a PGLite dialect.
+    // Returning a dummy Pool that rejects keeps betterAuth() constructible while
+    // ensureAuthReady / handlers fail with a clear message (no ENOENT on .data).
+    const reject = async () => {
+      throw new Error(
+        "AUTH_NO_DATABASE: Published deploy has no DATABASE_URL. " +
+          "Sign-in cannot persist sessions until the host injects Neon Postgres.",
+      );
+    };
+    return new Proxy({} as import("pg").Pool, {
+      get(_t, prop) {
+        if (prop === "then") return undefined;
+        if (prop === "query" || prop === "connect" || prop === "end") {
+          return reject;
+        }
+        return undefined;
+      },
+    });
+  }
 
-  const handler: ProxyHandler<import("pg").Pool> = {
-    get(_t, prop, receiver) {
-      if (prop === "then") return undefined; // not a Promise
-      if (prop === "query") {
-        return async (...args: unknown[]) => {
-          const pool = await resolve();
-          return (pool.query as (...a: unknown[]) => unknown)(...args);
-        };
-      }
-      if (prop === "connect") {
-        return async (...args: unknown[]) => {
-          const pool = await resolve();
-          return (pool.connect as (...a: unknown[]) => unknown)(...args);
-        };
-      }
-      if (prop === "end") {
-        return async (...args: unknown[]) => {
-          if (!target.pool) return;
-          return target.pool.end(...(args as []));
-        };
-      }
-      // Sync property reads (e.g. totalCount) after pool exists; otherwise 0/undefined.
-      if (target.pool) {
-        const value = Reflect.get(target.pool, prop, receiver);
-        return typeof value === "function" ? value.bind(target.pool) : value;
-      }
-      return undefined;
-    },
-  };
-  return new Proxy({} as import("pg").Pool, handler);
+  return { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
 }
 
 const database = createAuthDatabase();
@@ -300,6 +335,14 @@ export function ensureAuthReady(): Promise<void> {
   return ensureDbReady().then(() => {
     if (dbSource === "neon" && globalAuthRef.__grokAuthReady__) {
       return globalAuthRef.__grokAuthReady__;
+    }
+    if (!databaseUrl && !pgliteUsableInThisRuntime()) {
+      return Promise.reject(
+        new Error(
+          "AUTH_NO_DATABASE: Published deploy has no DATABASE_URL. " +
+            "Sign-in cannot persist sessions until the host injects Neon Postgres.",
+        ),
+      );
     }
   });
 }
