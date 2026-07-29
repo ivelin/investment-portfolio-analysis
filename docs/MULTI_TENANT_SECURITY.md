@@ -36,3 +36,12 @@ Tracked fixtures under `tests/fixtures/extractions/` must remain **synthetic**
 
 Synthetic demo portfolios are allowed in product and tests. They must be labeled
 and must not be reverse-engineered from real user balances.
+
+## Token refresh
+
+Background token refresh must:
+
+1. Load secrets only for the connector’s `tenant_id`.
+2. Write refreshed tokens only to that same tenant.
+3. Never batch tokens into a shared process cache keyed only by broker.
+4. Log redacted outcomes only (`connector.token_refreshed` / `token_refresh_failed`).

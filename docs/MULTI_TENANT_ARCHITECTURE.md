@@ -82,3 +82,37 @@ See [MULTI_TENANT_SECURITY.md](./MULTI_TENANT_SECURITY.md) and root
 concepts (fund symbol, GT tables, redaction) but runs as a separate deployable
 with Neon. Over time, pure calculation modules may be shared via documented
 parity tests — never by committing instance databases.
+
+
+## Per-broker OAuth (hosted)
+
+| Broker | Auth model | Notes |
+|--------|------------|-------|
+| Schwab | Direct Developer API OAuth (PKCE + client secret) | App-level `SCHWAB_CLIENT_ID`/`SECRET`; **user tokens per tenant** |
+| Robinhood | Hosted MCP OAuth 2.1 + DCR | Resource `https://agent.robinhood.com/mcp/trading` |
+| Interactive Brokers | Hosted MCP OAuth 2.1 + DCR | Resource `https://api.ibkr.com/v1/api/mcp-public` |
+
+**Hard rule:** never use an operator/Grok platform MCP session as a multi-tenant Connect feed.
+See [BROKER_OAUTH.md](./BROKER_OAUTH.md).
+
+## Token refresh job (hosted)
+
+Access tokens expire. Hosted platform runs a **tenant-scoped** `token_refresh` job:
+
+1. Select connectors with status `connected` or `error` (optionally filter one `tenant_id`).
+2. For each row, open **that** tenant’s sealed `connector_secrets` only.
+3. If access token expires within skew (default 10 minutes) or `force`, call broker refresh endpoint.
+4. Seal new tokens back to the same tenant; audit redacted `connector.token_refreshed`.
+5. Failures mark **only that connector** — never another tenant.
+
+Auth for the job endpoint: `Authorization: token $CRON_SECRET` or admin session.
+Sync paths also refresh inline via the same helper before broker pulls.
+
+Pure decision matrix (for tests / implementers):
+
+| Tokens | Force | Near expiry | Has refresh_token | Action |
+|--------|-------|-------------|-------------------|--------|
+| missing access | * | * | * | needs_reauth |
+| present | false | no | * | skip |
+| present | true or near expiry | * | no | needs_reauth |
+| present | true or near expiry | * | yes | refresh |

@@ -63,3 +63,5 @@ The retired SOTA VQA prompt lives in `archive/extraction_prompts_sota_vqa/01_bro
 - Always prefer **linking** to the canonical document rather than copying content.
 
 This structure keeps the documentation DRY (Don't Repeat Yourself) and MECE (Mutually Exclusive, Collectively Exhaustive).
+
+- [BROKER_OAUTH.md](./BROKER_OAUTH.md) — per-broker OAuth + token refresh
