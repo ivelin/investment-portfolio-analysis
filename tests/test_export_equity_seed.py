@@ -9,10 +9,7 @@ import pytest
 from portfolio_analysis.account_nlv import get_account_nlv_series
 from portfolio_analysis.db import init_db
 from portfolio_analysis.jobs.daily_net_liq import run_daily_net_liq
-from portfolio_analysis.jobs.export_equity_seed import (
-    seed_from_account_statement,
-    seed_equity_from_local_exports,
-)
+from portfolio_analysis.jobs.export_equity_seed import seed_from_account_statement
 
 
 @pytest.fixture
