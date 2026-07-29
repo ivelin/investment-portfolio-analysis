@@ -14,12 +14,14 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+/lib/
+/lib64/
 lib64/
 parts/
 sdist/
 var/
 wheels/
+# NOTE: do NOT ignore **/lib/ — web/src/lib is the hosted product library.
 *.egg-info/
 .installed.cfg
 *.egg
