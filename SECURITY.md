@@ -2,9 +2,16 @@
 
 This project is designed so **personal brokerage data stays on the operator’s machine**, in a **canonical directory outside the source repository**.
 
+For the **hosted multi-tenant** product, also read:
+
+- [docs/MULTI_TENANT_SECURITY.md](docs/MULTI_TENANT_SECURITY.md)
+- [docs/MULTI_TENANT_ARCHITECTURE.md](docs/MULTI_TENANT_ARCHITECTURE.md)
+
+Hosted tenants use Neon Postgres with session auth; the public git tree still must never contain real balances, tokens, or PII.
+
 ## Canonical instance home (required convention)
 
-All concrete *instance* data for a running operator lives under:
+All concrete *instance* data for a running **local** operator lives under:
 
 ```text
 ~/.investment-portfolio-analysis/                 # PORTFOLIO_ANALYSIS_HOME
@@ -79,6 +86,7 @@ Legacy fallbacks (read-only compatibility):
 - OAuth tokens (`tokens.json`, `client_secret*.json`)
 - Environment files with API keys (`.env`, `POLYGON_API_KEY`, `SCHWAB_CLIENT_SECRET`, etc.)
 - Unredacted account numbers, taxpayer names, addresses, or SSN/TIN fragments
+- Hosted Neon dumps, connector ciphertext, or real multi-tenant portfolio rows
 
 `.gitignore` blocks the common patterns. Do not use `git add -f` on those paths.
 
@@ -102,3 +110,4 @@ instance-local `.env`). The code never hard-codes API keys or client secrets.
 If you believe credentials or personal financial data were committed, rotate the
 affected secrets immediately and open an issue (or contact the maintainer)
 describing the path and commit. History rewrite + force-push may be required.
+Do **not** paste the secret into the issue body.

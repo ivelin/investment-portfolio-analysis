@@ -15,6 +15,11 @@ This directory contains the detailed specifications, workflows, and design docum
 - [SKILL.md](../SKILL.md) — Authoritative interface for using this as a Grok skill (CLI commands, constraints, recommended workflows).
 - [README.md](../README.md) — Project overview and quick start.
 
+### Multi-tenant hosted platform (in progress)
+- **[MULTI_TENANT_ARCHITECTURE.md](MULTI_TENANT_ARCHITECTURE.md)** — Hosted web + API + MCP + Neon multi-tenant design (Phase 1).
+- **[MULTI_TENANT_SECURITY.md](MULTI_TENANT_SECURITY.md)** — Public-repo and tenant isolation hard rules for hosted mode.
+- Branch: `feature/multi-tenant-platform`
+
 ### Core Workflows & Data Handling (Single Source of Truth)
 - **[Ingestion-Workflow.md](Ingestion-Workflow.md)** — **The canonical reference** for all data sources, file types, ingestion commands, canonical storage rules, and recommended processes.
   - Includes detailed guidance on Positions CSVs, AccountStatement CSVs, Transactions, Realized Gains, and PDF statements.
@@ -46,12 +51,14 @@ The retired SOTA VQA prompt lives in `archive/extraction_prompts_sota_vqa/01_bro
 | Agents / Skill users      | `SKILL.md` (root)                 | How to invoke and work with this skill |
 | Developers & contributors | `README.md` (root) + this index   | Project overview + navigation |
 | Anyone doing ingestion    | `Ingestion-Workflow.md`           | **Single source of truth** for data handling |
+| Hosted multi-tenant work  | `MULTI_TENANT_ARCHITECTURE.md`    | Auth, tenants, Neon, API/MCP |
 | Architects & long-term work | Design & Framework docs        | Rationale, architecture, and implementation plans |
 
 ## Updating Documentation
 
 - When changing ingestion behavior or data sources → update **Ingestion-Workflow.md** first.
 - When changing the public CLI or skill interface → update **SKILL.md**.
+- When changing multi-tenant hosted design → update **MULTI_TENANT_ARCHITECTURE.md** / **MULTI_TENANT_SECURITY.md**.
 - When changing high-level design → update the relevant design document and add a note here if needed.
 - Always prefer **linking** to the canonical document rather than copying content.
 
