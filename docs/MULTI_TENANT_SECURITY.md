@@ -61,3 +61,7 @@ Callback must:
 - **Not** investment advice.
 - **Not** for RIAs / advisors / professional client services.
 - Product must not ship features that manage third-party client money under one operator login without a separate approved product mode.
+
+## Legal acceptance (minimal)
+
+Before private product use, each user must accept a versioned **Terms + Privacy** pack (one click). Store `user_id`, document id, version, `accepted_at`. Bump version when text changes to re-prompt. Template language only — counsel review before commercial launch.
