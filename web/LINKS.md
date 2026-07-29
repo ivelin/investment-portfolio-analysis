@@ -8,16 +8,16 @@ Easy reference links for this multi-tenant portfolio analysis work.
 |------|------|
 | **Live preview** | Grok chat **outside** a Project → live preview panel (`*.grok-sandbox.com`) |
 | **In-app links page** | `/links` in the preview |
-| **Published app** | https://investment-portfolio-analysis.grok.me |
+| **Published app** | https://ivesting-portfolio-analysis.grok.me |
 
 ### Sign-in: preview vs published
 
 | Environment | Why login works / fails |
 |-------------|-------------------------|
 | **Preview** (`*.grok-sandbox.com`) | Shared sandbox OAuth client — works out of the box (PGLite) |
-| **Published** (`*.grok.me`, etc.) | Needs host-injected `GROK_AUTH_*`, `BETTER_AUTH_*`, **`DATABASE_URL` (Neon)** |
+| **Published** (`*.grok.me`) | Needs `GROK_AUTH_*`, `BETTER_AUTH_*`, and durable Postgres (`DATABASE_URL` / Neon) |
 
-**Current:** Auth client configured (`deployed_client`). **App Neon wiring complete** (shared pool, runtime migrations, auth awaits DB). Published host still needs **`DATABASE_URL` injection** — check `GET /api/v1/health/auth` for `database: "neon"`.
+**Current:** Auth client configured (`deployed_client`). App Neon path complete. Health: `GET /api/v1/health/auth` → want `database: "neon"`.
 
 ## Source & PR
 
