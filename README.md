@@ -2,64 +2,72 @@
 
 **Hold yourself to the same standard you hold every stock.**
 
-Retail investors often apply strict rules to the public instruments they buy — then go soft on the one manager they cannot fire: **themselves**.
+A **hosted multi-tenant** app for retail self-accountability: measure portfolio and
+**per-account** performance with capital efficiency, keep / monitor / weed
+discipline, and incomplete truth over comforting fiction.
 
-This product exists so you can measure portfolio and **per-account** performance with the same objectivity you use on symbols in the market: capital efficiency, keep / monitor / weed discipline, and incomplete truth over comforting fiction.
+## Product
 
-## The problem
+| Capability | Description |
+|------------|-------------|
+| **Workspaces** | Personal tenant isolation — your data never mixes with another user’s |
+| **Auth** | Better Auth + federated sign-in (Google / X via platform broker) |
+| **Dashboard** | Demo/synthetic funds first; real broker data via connectors |
+| **API + MCP** | Same domain service as the UI — session or tenant API key |
+| **Honest data** | No fabricated daily history; gaps are shown as incomplete |
 
-| What you already do on stocks | What most people skip on their own accounts |
-|-------------------------------|-----------------------------------------------|
-| Demand earnings quality and trend | Accept vague “I’m doing fine” |
-| Cut losers; add to winners | Leave dead weight because it feels personal |
-| Compare to objective benchmarks | Ignore cash-flow-neutral account performance |
+## Stack
 
-Broker apps show balances and open P/L. They rarely answer:
+| Layer | Technology |
+|-------|------------|
+| App | TanStack Start, React 19, Vite, Nitro → Vercel |
+| UI | Tailwind CSS 4, Radix UI |
+| Auth | Better Auth (`/api/auth/*`) |
+| Database | Neon Postgres (PGLite for local dev only) |
+| Domain | `web/src/lib/portfolio/service.server.ts` (UI + REST + MCP) |
+| Hosting | Vercel + Neon |
 
-- Is **this holding** earning its keep relative to the capital it uses?
-- Is **this account** (you as manager) earning its keep after deposits and withdrawals are neutralized?
+Application code lives entirely under **`web/`**.
 
-## What you get
+## Quick start (developers)
 
-- **Capital efficiency** — time-weighted performance that separates skill from cash flows
-- **Account as a private fund** — each workspace account measured like a fund symbol, not a black box
-- **Keep / Monitor / Weed** — clear recommendations instead of narrative excuses
-- **Honest data only** — no fabricated daily history; when data is incomplete, the product says so
-- **Private by design** — your real balances and credentials never belong in this public repository
+```bash
+cd web
+npm ci
+npm run dev          # http://localhost:8080
+npm run ci           # typecheck + test suite (required before push)
+```
 
-## Who it is for
+Full local gate from repo root:
 
-Retail investors and small teams who want **self-accountability** — the same bar for “me as manager” that they already apply to TSLA, an ETF, or a mutual fund.
+```bash
+make ci              # web typecheck + suites
+make install-hooks   # pre-push runs make ci
+```
 
-## Product direction (multi-tenant)
+## Documentation
 
-We are building a **hosted multi-tenant** app: personal workspaces, secure sign-in, dashboard, API, and agent-friendly tools — so the discipline scales beyond a single machine.
-
-| Phase | User-facing outcome |
-|-------|---------------------|
-| **Now** | Architecture, security contracts, and foundation for isolated workspaces |
-| **Next** | Sign-in, personal workspace, synthetic demo fund you can explore safely |
-| **Then** | Bring your own data; measure real accounts without inventing history |
-| **Later** | Full capital-efficiency and weed-the-garden engines on your workspace data |
-
-Implementation detail for builders lives under [`docs/`](docs/) — start with [docs/MULTI_TENANT_ARCHITECTURE.md](docs/MULTI_TENANT_ARCHITECTURE.md) and [docs/MULTI_TENANT_SECURITY.md](docs/MULTI_TENANT_SECURITY.md).
+| Doc | Purpose |
+|-----|---------|
+| [docs/MULTI_TENANT_ARCHITECTURE.md](docs/MULTI_TENANT_ARCHITECTURE.md) | Tenants, API, MCP, Neon |
+| [docs/MULTI_TENANT_SECURITY.md](docs/MULTI_TENANT_SECURITY.md) | Isolation + public-repo hard rules |
+| [docs/BROKER_OAUTH.md](docs/BROKER_OAUTH.md) | Per-tenant broker OAuth |
+| [SECURITY.md](SECURITY.md) | Secrets, redaction, no PII in git |
+| [HANDOFF.md](HANDOFF.md) | Deploy / agent handoff |
 
 ## Principles (non-negotiable)
 
 1. **Incomplete truth over comforting fiction** — never invent daily values to fill gaps.
 2. **You cannot fire yourself — so measure yourself** — accounts are measured like funds.
-3. **Public repo stays clean** — no real balances, tokens, exports, or PII in git. See [SECURITY.md](SECURITY.md).
+3. **Tenant isolation** — no shared portfolio or broker secrets across workspaces.
+4. **Public repo stays clean** — no real balances, tokens, exports, or PII in git.
 
 ## Status
 
-Active work: branch [`feature/multi-tenant-platform`](https://github.com/ivelin/investment-portfolio-analysis/tree/feature/multi-tenant-platform) · [PR #5](https://github.com/ivelin/investment-portfolio-analysis/pull/5).
+Branch [`feature/multi-tenant-platform`](https://github.com/ivelin/investment-portfolio-analysis/tree/feature/multi-tenant-platform) · [PR #5](https://github.com/ivelin/investment-portfolio-analysis/pull/5).
 
 ## License
 
 Copyright 2025–2026 Ivelin Ivanov
 
 Licensed under the **Apache License, Version 2.0**. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-```text
-http://www.apache.org/licenses/LICENSE-2.0
-```

@@ -2,14 +2,10 @@
 /**
  * OAuth session-bind guard + compliance intended-use (pure + light DB).
  */
-import { createServer } from "vite";
+import { createViteTestServer } from "./vite-test-server.mjs";
 import assert from "node:assert/strict";
 
-const vite = await createServer({
-  server: { middlewareMode: true },
-  appType: "custom",
-  root: "/workspace",
-});
+const vite = await createViteTestServer();
 
 try {
   const guard = await vite.ssrLoadModule(

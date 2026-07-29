@@ -1,42 +1,24 @@
 # Multi-tenant security (public repository)
 
-This repository is **public**. Hosted multi-tenant code must not weaken privacy
-or leak one tenant’s portfolio into another.
+This repository is **public**. The product is **hosted multi-tenant only**.
 
 ## Never commit
 
-- Anything under a local skill home / export folders
-- Broker exports (CSV, XML, PDF), SQLite/Postgres dumps, report artifacts with balances
-- OAuth tokens, client secrets, `.env` files, private keys, tenant API keys
+- Broker exports (CSV, XML, PDF), DB dumps, report artifacts with balances
+- OAuth tokens, client secrets, `.env` files, private keys
 - Unredacted account numbers, SSN/TIN, taxpayer names, addresses
 - Screenshots or fixtures derived from **real** portfolios
-- **Shared “live snapshots”** of any real broker session
+- `DATABASE_URL` or any connection string
 
 ## Hosted platform rules
 
-1. **Tenant isolation** — every query filters by `tenant_id` after membership or
-   API-key → tenant resolution. Never trust a client-supplied tenant id alone.
-2. **No shared broker path** — platform/operator MCP OAuth must not feed a
-   multi-tenant Connect button. Each tenant completes **their** OAuth.
-3. **Opaque account keys** — never use raw brokerage account numbers as primary keys.
-4. **Masking** — UI may show `…` + last 3 digits only.
-5. **Secrets** — connector credentials encrypted at rest; never returned by APIs or MCP.
-6. **API keys** — store SHA-256 only; prefix for display; revoke supported.
-7. **Redaction** — log and audit payloads run through redaction helpers before write.
-8. **Auth fail closed** — portfolio API/MCP require session or valid `pa_` key.
-9. **No secrets in the worktree** — host injects `DATABASE_URL` / OAuth env at deploy.
-
-## SOX-oriented control notes
-
-We do not claim formal SOC 2 certification here. Engineering controls map to:
-
-| Area | Practice |
-|------|----------|
-| Logical access | Auth + roles + tenant membership |
-| Data isolation | `tenant_id` + service-layer enforcement |
-| Monitoring | `audit_events` (redacted) |
-| Confidentiality | Encryption envelope for connector secrets; redaction |
-| Change management | Migrations, public code review, no PII in repo |
+1. **Tenant isolation** — every query filters by `tenant_id` after membership check.
+2. **Opaque account keys** — never use raw brokerage account numbers as primary keys.
+3. **Masking** — UI may show `…` + last 3 digits only.
+4. **Secrets** — connector credentials encrypted at rest; never returned by APIs or MCP.
+5. **Redaction** — log and audit payloads run through redaction helpers before write.
+6. **Auth** — portfolio API/MCP require a verified session or tenant API key; fail closed.
+7. **No secrets in the worktree** — Vercel/Neon inject env at deploy; do not commit `.env`.
 
 ## Reporting a leak
 
@@ -47,5 +29,16 @@ We do not claim formal SOC 2 certification here. Engineering controls map to:
 
 ## Demo data
 
-Synthetic demo portfolios are allowed. They must be labeled and must not be
-reverse-engineered from real user balances.
+Synthetic demo portfolios are allowed in product and tests. They must be labeled
+and must not be reverse-engineered from real user balances.
+
+## Token refresh
+
+Tenant-scoped only. Open `connector_secrets` for that connector’s `tenant_id`
+only. Failures mark only that connector — never another tenant.
+
+## OAuth session bind
+
+Broker OAuth start stores the authenticated user id in state. Callback rejects
+mismatches. Tenant id for token storage comes from the server session, not the
+client body.

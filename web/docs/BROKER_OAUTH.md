@@ -13,7 +13,7 @@ MCP sessions, or account payloads across tenants.
 
 Reference implementations:
 
-- Schwab OAuth code path: upstream repo `portfolio_analysis/schwab/auth.py` +
+- Schwab OAuth code path: `web/src/lib/portfolio/oauth/schwab.server.ts` +
   `connectors/oauth.py` (PKCE S256, form token exchange with client_secret).
 - Robinhood official MCP: [Agentic Trading overview](https://robinhood.com/us/en/support/articles/agentic-trading-overview/)
 - IBKR official MCP: [AI integrations](https://www.interactivebrokers.com/en/trading/ai-integrations.php)

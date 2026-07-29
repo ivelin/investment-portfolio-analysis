@@ -3,14 +3,10 @@
  * Pure MECE unit tests — no DB, no network.
  * Locks refresh + connector CTA decision matrices (DRY with app modules).
  */
-import { createServer } from "vite";
+import { createViteTestServer } from "./vite-test-server.mjs";
 import assert from "node:assert/strict";
 
-const vite = await createServer({
-  server: { middlewareMode: true },
-  appType: "custom",
-  root: "/workspace",
-});
+const vite = await createViteTestServer();
 
 try {
   const refresh = await vite.ssrLoadModule(

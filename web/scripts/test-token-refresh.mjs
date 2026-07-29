@@ -3,14 +3,10 @@
  * Unit + integration tests for tenant-scoped token refresh job.
  * Uses mocked fetch for broker token endpoints; no real secrets.
  */
-import { createServer } from "vite";
+import { createViteTestServer } from "./vite-test-server.mjs";
 import assert from "node:assert/strict";
 
-const vite = await createServer({
-  server: { middlewareMode: true },
-  appType: "custom",
-  root: "/workspace",
-});
+const vite = await createViteTestServer();
 
 const originalFetch = globalThis.fetch;
 

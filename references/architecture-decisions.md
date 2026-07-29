@@ -1,60 +1,31 @@
-# Portfolio Analysis Architecture Decisions (2026-05)
+# Architecture decisions
 
-## Data Ingestion Strategy
-- **Primary source**: Schwab exported CSV/XML files (Transactions, Realized Gain/Loss, Positions)
-- **Reason**: Live Schwab API + MCP proved too flaky and unreliable for daily/weekly use
-- **Database**: SQLite (for consistency with the `stock-analysis` skill)
-- **Future option**: DuckDB can be used as an analytical query layer on top of the SQLite files
+## Product shape (2026-07)
 
-## Development Workflow
-- All new work happens in the dedicated repository: `ivelin/investment-portfolio-analysis`
-- Feature development, tests, and debugging are delegated via **grok-build**
-- The skill in `~/.hermes/skills/` is symlinked to the repo for zero duplication
+- **Decision:** Multi-tenant hosted app only (`web/`).
+- **Rationale:** Single deployable for UI, REST, and MCP; Neon for durable
+  tenant data; no single-user SQLite/CLI skill in this repository.
+- **Rule:** Domain logic in `web/src/lib/portfolio/service.server.ts`; thin
+  adapters for UI server functions, REST routes, and `/api/v1/mcp`.
 
-## Core Analytical Workflows
-- "Weed the Garden" capital efficiency scan (inspired by ThinkScript logic)
-- Time-weighted performance metrics
-- CANSLIM adherence review of historical trades
-- Cross-referencing with `stock-analysis` market data
+## Database
 
-## When to Revisit API Approach
-Only reconsider live API/MCP if:
-- Schwab significantly improves OAuth reliability, or
-- A stable, well-maintained open source MCP server matures (e.g. jkoelker/schwab-mcp)
+- **Deploy:** Neon Postgres via `DATABASE_URL` (Vercel).
+- **Local dev:** PGLite when `DATABASE_URL` is unset.
+- **Serverless without DB:** fail closed (no PGLite on Vercel).
 
-## CLI as the Primary Extension Point for Tools & Workflows (2026-05)
+## Auth
 
-- **Decision**: All new tools, workflows, and operational features added to the skill must be implemented as subcommands under the `portfolio` CLI.
-- **Rationale**:
-  - Provides a single, consistent, and discoverable interface (`portfolio --help`).
-  - Keeps the skill cleanly packaged as a proper Python application.
-  - Avoids fragmentation from scattered standalone scripts.
-  - Improves long-term maintainability and agent usability.
-- **Implementation Rule**:
-  - New functionality is added by extending `portfolio_analysis/cli.py` (or a dedicated commands structure under it).
-  - Direct scripts under `tools/` are now considered legacy or internal utilities.
-- **Migration Direction**:
-  - Existing high-value tools in `tools/` will be progressively converted into CLI subcommands.
-  - Direct execution of tools (`python tools/xxx.py`) is deprecated for normal use.
-- **Documentation**:
-  - `SKILL.md` is the primary place where recommended workflows are described and will be updated to reflect the `portfolio` CLI as the default interface.
+- Better Auth self-hosted at `/api/auth/*`.
+- Federated Google/X via platform auth broker.
+- API/MCP: session cookie or tenant API key (`pa_…`).
 
-This decision establishes a clear architectural direction for the evolution of the skill.
+## Broker connectivity
 
-This document captures the deliberate architectural choices made after evaluating live API vs file-based approaches.
+- Per-tenant OAuth; tokens sealed in `connector_secrets`.
+- Never use a shared operator MCP session as a multi-tenant data feed.
 
-## Multi-tenant hosted platform (2026-07)
+## Analytics engines
 
-- **Decision**: Hosted product on grok.me is **multi-tenant** with Neon Postgres,
-  Better Auth (Grok broker), REST + MCP APIs, and a full-stack web dashboard.
-  Local skill mode (SQLite under `PORTFOLIO_ANALYSIS_HOME`) remains fully supported.
-- **Branch**: `feature/multi-tenant-platform`
-- **Canonical docs**: [docs/MULTI_TENANT_ARCHITECTURE.md](../docs/MULTI_TENANT_ARCHITECTURE.md),
-  [docs/MULTI_TENANT_SECURITY.md](../docs/MULTI_TENANT_SECURITY.md)
-- **Hard rules**:
-  - Public repo must never contain real balances, tokens, exports, or PII.
-  - Every hosted portfolio row is scoped by `tenant_id` + membership check.
-  - Demo/synthetic data only until a tenant connects their own sources.
-  - Connector secrets are encrypted at rest and never returned by APIs.
-- **Rationale**: Local MCP is single-operator; hosting requires auth, isolation,
-  and a scalable DB while preserving ground-truth integrity philosophy.
+- Capital efficiency / TWRR / fund-as-symbol designs under `docs/` are **product
+  targets** on tenant data, not a separate local stack.

@@ -14,59 +14,11 @@ import { redactObject, redactText } from "@/lib/security/redact";
  *
  * POST body: { "tool": string, "args"?: object }
  */
-export const Route = createFileRoute("/api/v1/mcp")({
-  server: {
-    handlers: {
-      GET: async () =>
-        Response.json({
-          ok: true,
-          name: "portfolio-analysis",
-          mode: "multi-tenant",
-          auth: ["session", "tenant_api_key"],
-          tools: TOOL_CATALOG,
-          isolation:
-            "Every tool is scoped to the caller's tenant. No shared broker feeds.",
-          note: "POST { tool, args }. Use the same reports as the web app.",
-        }),
-      POST: async ({ request }) => {
-        try {
-          const principal = await requireApiPrincipal(request);
-          let body: { tool?: string; args?: Record<string, unknown> } = {};
-          try {
-            body = (await request.json()) as typeof body;
-          } catch {
-            return Response.json(
-              { ok: false, error: "Invalid JSON body" },
-              { status: 400 },
-            );
-          }
-          const tool = body.tool ?? "list_tools";
-          if (WRITE_TOOLS.has(tool) && principal.scopes === "read") {
-            return Response.json(
-              { ok: false, error: "API key scope is read-only" },
-              { status: 403 },
-            );
-          }
-          const result = await runTool(
-            tool,
-            principal.tenantId,
-            body.args ?? {},
-          );
-          return Response.json(redactObject({ ok: true, tool, result }), {
-            headers: { "cache-control": "no-store" },
-          });
-        } catch (err) {
-          return jsonError(err, 401);
-        }
-      },
-    },
-  },
-});
 
 /** Tools that mutate state — require write scope for API keys. */
 const WRITE_TOOLS = new Set<string>([]);
 
-const TOOL_CATALOG = [
+export const TOOL_CATALOG = [
   {
     name: "list_tools",
     description: "List tools (parity with web app capabilities)",
@@ -93,7 +45,8 @@ const TOOL_CATALOG = [
   },
 ] as const;
 
-async function runTool(
+/** Shipped tool dispatch — same path production MCP POST uses. */
+export async function runTool(
   tool: string,
   tenantId: string,
   args: Record<string, unknown>,
@@ -166,3 +119,57 @@ async function runTool(
       };
   }
 }
+
+export async function mcpGetHandler(): Promise<Response> {
+  return Response.json({
+    ok: true,
+    name: "portfolio-analysis",
+    mode: "multi-tenant",
+    auth: ["session", "tenant_api_key"],
+    tools: TOOL_CATALOG,
+    isolation:
+      "Every tool is scoped to the caller's tenant. No shared broker feeds.",
+    note: "POST { tool, args }. Use the same reports as the web app.",
+  });
+}
+
+export async function mcpPostHandler({
+  request,
+}: {
+  request: Request;
+}): Promise<Response> {
+  try {
+    const principal = await requireApiPrincipal(request);
+    let body: { tool?: string; args?: Record<string, unknown> } = {};
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return Response.json(
+        { ok: false, error: "Invalid JSON body" },
+        { status: 400 },
+      );
+    }
+    const tool = body.tool ?? "list_tools";
+    if (WRITE_TOOLS.has(tool) && principal.scopes === "read") {
+      return Response.json(
+        { ok: false, error: "API key scope is read-only" },
+        { status: 403 },
+      );
+    }
+    const result = await runTool(tool, principal.tenantId, body.args ?? {});
+    return Response.json(redactObject({ ok: true, tool, result }), {
+      headers: { "cache-control": "no-store" },
+    });
+  } catch (err) {
+    return jsonError(err, 401);
+  }
+}
+
+export const Route = createFileRoute("/api/v1/mcp")({
+  server: {
+    handlers: {
+      GET: mcpGetHandler,
+      POST: mcpPostHandler,
+    },
+  },
+});

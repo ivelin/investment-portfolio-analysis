@@ -3,14 +3,10 @@
  * Broker setup path: Schwab app credentials → configured → OAuth start isolation.
  * No real Schwab network calls; mocks authorize URL builder path via sealed creds.
  */
-import { createServer } from "vite";
+import { createViteTestServer } from "./vite-test-server.mjs";
 import assert from "node:assert/strict";
 
-const vite = await createServer({
-  server: { middlewareMode: true },
-  appType: "custom",
-  root: "/workspace",
-});
+const vite = await createViteTestServer();
 
 // Avoid accidental env short-circuit during this process
 delete process.env.SCHWAB_CLIENT_ID;

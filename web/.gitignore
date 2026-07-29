@@ -14,3 +14,8 @@ attachments/
 
 # Sandbox-only Neon bootstrap — never commit
 src/lib/db-bootstrap.secret.ts
+.vercel
+.env*.local
+node_modules/.vite-test/
+coverage/
+.coverage-scratch/

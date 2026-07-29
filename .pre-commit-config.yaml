@@ -1,11 +1,7 @@
-# .pre-commit-config.yaml
-# Local CI/CD enforcement for portfolio-analysis
-#
-# Install with:
-#   uv run pre-commit install
-#
-# This runs automatically on every `git commit`.
-# For full local CI before PR: `make ci`
+# Lightweight commit hygiene. Full suite is pre-push via make ci.
+# Install: make install-hooks
+
+default_stages: [pre-commit]
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -15,36 +11,4 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-added-large-files
-        args: ['--maxkb=500']
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.13
-    hooks:
-      - id: ruff
-        args: [--fix, --exit-non-zero-on-fix]
-      - id: ruff-format
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.10.0
-    hooks:
-      - id: mypy
-        args: [--ignore-missing-imports, --no-error-summary]
-        additional_dependencies: [types-requests, types-python-dateutil]
-        files: ^src/
-        pass_filenames: true
-
-  - repo: local
-    hooks:
-      - id: pytest-full
-        name: Full pytest suite
-        entry: uv run pytest tests/ -q --tb=line
-        language: system
-        pass_filenames: false
-        stages: [pre-commit]
-
-      - id: test-mcp-smoke
-        name: MCP Server Smoke Test (import + basic)
-        entry: uv run --extra mcp python -c "from portfolio_analysis.mcp_server import mcp; print('MCP server imports OK'); print('Tools:', [t.name for t in mcp._tool_manager._tools.values()]); print('MCP smoke passed')"
-        language: system
-        pass_filenames: false
-        stages: [pre-commit]
+        args: ["--maxkb=500"]

@@ -3,13 +3,9 @@
  * Isolation self-test: two tenants must never see each other's accounts.
  * Also asserts OAuth start does not use shared snapshots.
  */
-import { createServer } from "vite";
+import { createViteTestServer } from "./vite-test-server.mjs";
 
-const vite = await createServer({
-  server: { middlewareMode: true },
-  appType: "custom",
-  root: "/workspace",
-});
+const vite = await createViteTestServer();
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);

@@ -1,12 +1,8 @@
 #!/usr/bin/env node
-import { createServer } from "vite";
+import { createViteTestServer } from "./vite-test-server.mjs";
 import assert from "node:assert/strict";
 
-const vite = await createServer({
-  server: { middlewareMode: true },
-  appType: "custom",
-  root: "/workspace",
-});
+const vite = await createViteTestServer();
 
 try {
   const { getAuthRuntimeStatus, pgliteUsableInThisRuntime } =

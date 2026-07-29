@@ -10,7 +10,7 @@ Financial data. **Every user OAuth token is tenant-scoped.**
 | **Robinhood** | Remote MCP OAuth 2.1 (public client + DCR) | Hosted MCP `https://agent.robinhood.com/mcp/trading` | MCP tools with user access token |
 | **Interactive Brokers** | Remote MCP OAuth 2.1 (public client + DCR) | Hosted MCP `https://api.ibkr.com/v1/api/mcp-public` | MCP tools with user access token (`mcp.read`) |
 
-Reference: local skill `portfolio_analysis/schwab/auth.py` (PKCE S256 + form token exchange).
+Implementation: `web/src/lib/portfolio/oauth/` (PKCE S256 + form token exchange).
 
 ## Isolation
 
