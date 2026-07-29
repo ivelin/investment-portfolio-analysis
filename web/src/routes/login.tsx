@@ -11,7 +11,8 @@ function Login() {
   const { user, isPending } = useCurrentUserState();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [needsSetup, setNeedsSetup] = useState(false);
+  /** Published host without durable DB — warn, but do not dead-end the CTAs. */
+  const [publishStoragePending, setPublishStoragePending] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -25,8 +26,7 @@ function Login() {
     getAuthStatusFn()
       .then((s) => {
         if (cancelled) return;
-        // Only block UX when the published host truly can't persist sessions.
-        setNeedsSetup(
+        setPublishStoragePending(
           s.hostKind === "published" &&
             (s.database === "pglite" || s.publishLikelyBroken),
         );
@@ -54,8 +54,8 @@ function Login() {
     } catch {
       // Plain language only — no env dumps on the login screen.
       setError(
-        needsSetup
-          ? "Published sign-in storage is still coming online. Try the live preview, or check back after the next publish."
+        publishStoragePending
+          ? "This published link can’t save accounts yet. Use the live preview in chat to sign in and try the app now — or republish after storage is attached."
           : "Sign-in didn’t work. Please try again.",
       );
     } finally {
@@ -79,14 +79,18 @@ function Login() {
             brokers.
           </p>
 
-          {needsSetup ? (
-            <div className="mt-4 rounded-[var(--radius-md)] border border-border bg-bg-subtle px-3 py-3 text-sm leading-relaxed text-fg-muted">
-              <p className="font-medium text-fg">Almost ready</p>
+          {publishStoragePending ? (
+            <div className="mt-4 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm leading-relaxed text-fg-muted">
+              <p className="font-medium text-fg">Published sign-in not ready yet</p>
               <p className="mt-1">
-                Sign-in providers are live; durable account storage on the
-                published host is finishing setup. Live preview sign-in works
-                now — published Google/X will unlock on the next full publish
-                once storage is attached.
+                Google and X are configured, but this published host still has no
+                durable account database. Sign-in will fail until the host
+                attaches storage and you republish.
+              </p>
+              <p className="mt-2">
+                <strong className="font-medium text-fg">What works now:</strong>{" "}
+                open this same app’s <strong className="font-medium text-fg">live preview</strong>{" "}
+                in the Grok chat — sign-in works there.
               </p>
             </div>
           ) : null}
@@ -105,7 +109,7 @@ function Login() {
                 <button
                   key={p.providerId}
                   type="button"
-                  disabled={busy != null || needsSetup}
+                  disabled={busy != null}
                   onClick={() => void onSignIn(p.providerId)}
                   className="flex h-11 w-full items-center justify-center rounded-[var(--radius-sm)] border border-border bg-bg px-4 text-sm font-medium text-fg transition-colors hover:bg-bg-subtle disabled:opacity-50"
                 >
