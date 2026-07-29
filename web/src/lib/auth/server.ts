@@ -59,7 +59,6 @@ void ensureDbReady();
  */
 const globalAuthRef = globalThis as typeof globalThis & {
   __grokAuthPreviewSecret__?: string;
-  __grokAuthNeonPool__?: import("pg").Pool;
   __grokAuthReady__?: Promise<void>;
 };
 function previewAuthSecret(): string {
@@ -133,7 +132,10 @@ const trustedOrigins: string[] = explicitBaseURL
       ...previewAllowedHosts,
       "*.grok.me",
       // Full-origin wildcards (matched against Origin)
-      ...previewAllowedHosts.flatMap((host) => [`https://${host}`, `http://${host}`]),
+      ...previewAllowedHosts.flatMap((host) => [
+        `https://${host}`,
+        `http://${host}`,
+      ]),
       "https://*.grok.me",
       ...LOCAL_DEV_ORIGINS,
     ];
@@ -154,6 +156,8 @@ const grokUserInfoUrl = `${issuerBase}/api/auth/oauth2/userinfo`;
  *
  * Neon: shared Pool from `@/lib/db` (same process pool + migrations as app SQL).
  * We hand a thenable-backed Pool proxy so the first auth query awaits migrations.
+ * Better Auth detects Postgres via `"connect" in pool` — the Proxy MUST implement
+ * a `has` trap or createKyselyAdapter returns null (Failed to initialize adapter).
  * PGLite: Kysely dialect over the embedded instance (preview only).
  * Serverless without DATABASE_URL: throw on first use (never load broken PGLite).
  */
@@ -170,36 +174,44 @@ function createAuthDatabase():
     };
     globalAuthRef.__grokAuthReady__ ??= resolve().then(() => undefined);
 
+    // Stub methods so `"connect" in pool` / `"query" in pool` are true before
+    // the real Pool exists (createKyselyAdapter uses `in` checks, not get).
+    const poolShape = {
+      connect: async (...args: unknown[]) => {
+        const pool = await resolve();
+        return (pool.connect as (...a: unknown[]) => unknown)(...args);
+      },
+      query: async (...args: unknown[]) => {
+        const pool = await resolve();
+        return (pool.query as (...a: unknown[]) => unknown)(...args);
+      },
+      end: async (...args: unknown[]) => {
+        if (!target.pool) return;
+        return target.pool.end(...(args as []));
+      },
+    } as unknown as import("pg").Pool;
+
     const handler: ProxyHandler<import("pg").Pool> = {
-      get(_t, prop, receiver) {
+      get(t, prop, receiver) {
         if (prop === "then") return undefined; // not a Promise
-        if (prop === "query") {
-          return async (...args: unknown[]) => {
-            const pool = await resolve();
-            return (pool.query as (...a: unknown[]) => unknown)(...args);
-          };
+        if (prop in poolShape) {
+          return Reflect.get(poolShape, prop, receiver);
         }
-        if (prop === "connect") {
-          return async (...args: unknown[]) => {
-            const pool = await resolve();
-            return (pool.connect as (...a: unknown[]) => unknown)(...args);
-          };
-        }
-        if (prop === "end") {
-          return async (...args: unknown[]) => {
-            if (!target.pool) return;
-            return target.pool.end(...(args as []));
-          };
-        }
-        // Sync property reads (e.g. totalCount) after pool exists; otherwise 0/undefined.
         if (target.pool) {
           const value = Reflect.get(target.pool, prop, receiver);
-          return typeof value === "function" ? value.bind(target.pool) : value;
+          return typeof value === "function"
+            ? value.bind(target.pool)
+            : value;
         }
         return undefined;
       },
+      has(t, prop) {
+        if (prop === "connect" || prop === "query" || prop === "end") return true;
+        if (target.pool) return Reflect.has(target.pool, prop);
+        return Reflect.has(poolShape, prop);
+      },
     };
-    return new Proxy({} as import("pg").Pool, handler);
+    return new Proxy(poolShape, handler);
   }
 
   if (!pgliteUsableInThisRuntime()) {
@@ -212,13 +224,18 @@ function createAuthDatabase():
           "Sign-in cannot persist sessions until the host injects Neon Postgres.",
       );
     };
-    return new Proxy({} as import("pg").Pool, {
-      get(_t, prop) {
+    const stub = {
+      connect: reject,
+      query: reject,
+      end: reject,
+    } as unknown as import("pg").Pool;
+    return new Proxy(stub, {
+      get(t, prop) {
         if (prop === "then") return undefined;
-        if (prop === "query" || prop === "connect" || prop === "end") {
-          return reject;
-        }
-        return undefined;
+        return Reflect.get(t, prop);
+      },
+      has(_t, prop) {
+        return prop === "connect" || prop === "query" || prop === "end";
       },
     });
   }
