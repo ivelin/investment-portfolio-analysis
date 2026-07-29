@@ -1,28 +1,43 @@
-# Project audit (rhai) — multi-tenant platform
+# Project audit (rhai checklist)
 
-Keep docs, tests, and contracts **DRY** and **MECE**. Run on every PR.
+Keep docs, tests, and contracts **DRY** and **MECE**. Scan for security and retail-compliance liabilities.
 
-## Checklist (blocking intent)
+## Run (this public repo)
+
+```bash
+python scripts/project_audit.py
+# or
+make audit
+```
+
+CI runs the same step on every PR (`Project audit (rhai checklist)`).
+
+## Grok Build `.rhai` workflows
+
+| Environment | Supported? |
+|-------------|------------|
+| **Local Grok Build CLI** on your machine | If your local Grok Build install supports `.rhai` workflows, use [`.grok/workflows/project-audit.rhai`](../.grok/workflows/project-audit.rhai) as the recipe. |
+| **Grok web / app-builder sandbox** (hosted Build chat) | **No** — there is no `grok` CLI and no Rhai runner here. Use `python scripts/project_audit.py` (this repo) or `npm run audit` (hosted TanStack workspace). |
+
+The `.rhai` file is a **portable recipe** for agents/humans. The **executable** source of truth in this repository is `scripts/project_audit.py`.
+
+## Checklist (MECE)
 
 | Area | Check |
 |------|--------|
-| Isolation | Every hosted data path scoped by `tenant_id`; OAuth state binds user+tenant |
+| Isolation | Hosted paths scoped by `tenant_id`; OAuth state binds user+tenant; session bind on callback |
 | Secrets | No tokens, balances, PII, or live portfolio dumps in git |
-| OAuth | Session bind on callback; refresh matrix skip/refresh/needs_reauth |
+| OAuth | Refresh matrix `skip` / `refresh` / `needs_reauth` single-sourced |
 | Compliance | Self-management only; not advice; not professional client services |
-| Legal | Versioned Terms+Privacy acceptance before private use |
+| Legal | Versioned Terms+Privacy acceptance (hosted app); docs in this repo |
 | UX | Product UI is not technical documentation |
-| Tests | Isolation, MECE decisions, OAuth bind, legal pack docs stay green |
+| Tests | Isolation, MECE, OAuth bind, legal pack docs stay green |
 
-## Hosted app
+## Hosted app (separate workspace)
 
-The Grok Build workspace runs `npm run audit` / `npm run ci` (includes `scripts/project-audit.mjs`).
-
-## This repo
+The multi-tenant TanStack web app in Grok Build also has:
 
 ```bash
-uv run pytest tests/ -q
-uv run ruff check .
+npm run audit    # scripts/project-audit.mjs
+npm run ci
 ```
-
-CI: `.github/workflows/ci.yml` → `lint-and-test`.

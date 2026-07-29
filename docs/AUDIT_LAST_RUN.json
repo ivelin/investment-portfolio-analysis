@@ -1,0 +1,76 @@
+{
+  "name": "project-audit",
+  "alias": "rhai-audit",
+  "root": "/tmp/ipa-pr",
+  "summary": {
+    "block": 0,
+    "warn": 0,
+    "info": 9,
+    "pass": true
+  },
+  "findings": [
+    {
+      "id": "present:docs/MULTI_TENANT_ARCHITECTURE.md",
+      "severity": "info",
+      "area": "architecture",
+      "message": "OK \u2014 docs/MULTI_TENANT_ARCHITECTURE.md",
+      "file": "docs/MULTI_TENANT_ARCHITECTURE.md"
+    },
+    {
+      "id": "present:docs/MULTI_TENANT_SECURITY.md",
+      "severity": "info",
+      "area": "security",
+      "message": "OK \u2014 docs/MULTI_TENANT_SECURITY.md",
+      "file": "docs/MULTI_TENANT_SECURITY.md"
+    },
+    {
+      "id": "present:docs/BROKER_OAUTH.md",
+      "severity": "info",
+      "area": "oauth",
+      "message": "OK \u2014 docs/BROKER_OAUTH.md",
+      "file": "docs/BROKER_OAUTH.md"
+    },
+    {
+      "id": "present:docs/PROJECT_AUDIT.md",
+      "severity": "info",
+      "area": "audit",
+      "message": "OK \u2014 docs/PROJECT_AUDIT.md",
+      "file": "docs/PROJECT_AUDIT.md"
+    },
+    {
+      "id": "present:tests/test_multi_tenant_docs.py",
+      "severity": "info",
+      "area": "tests",
+      "message": "OK \u2014 tests/test_multi_tenant_docs.py",
+      "file": "tests/test_multi_tenant_docs.py"
+    },
+    {
+      "id": "present:tests/test_token_refresh_job.py",
+      "severity": "info",
+      "area": "tests",
+      "message": "OK \u2014 tests/test_token_refresh_job.py",
+      "file": "tests/test_token_refresh_job.py"
+    },
+    {
+      "id": "present:tests/test_mece_sre.py",
+      "severity": "info",
+      "area": "tests",
+      "message": "OK \u2014 tests/test_mece_sre.py",
+      "file": "tests/test_mece_sre.py"
+    },
+    {
+      "id": "present:tests/test_oauth_session_bind.py",
+      "severity": "info",
+      "area": "tests",
+      "message": "OK \u2014 tests/test_oauth_session_bind.py",
+      "file": "tests/test_oauth_session_bind.py"
+    },
+    {
+      "id": "present:tests/test_legal_pack_docs.py",
+      "severity": "info",
+      "area": "tests",
+      "message": "OK \u2014 tests/test_legal_pack_docs.py",
+      "file": "tests/test_legal_pack_docs.py"
+    }
+  ]
+}

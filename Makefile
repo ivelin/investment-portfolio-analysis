@@ -40,3 +40,7 @@ typecheck:
 install-hooks:
 	uv run pre-commit install
 	@echo "✅ Pre-commit hooks installed. They will run on every commit."
+
+.PHONY: audit
+audit:
+	python scripts/project_audit.py
