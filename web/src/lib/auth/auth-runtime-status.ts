@@ -10,7 +10,14 @@ export type AuthRuntimeStatus = {
   hasStableSecret: boolean;
   host: string | null;
   hostKind: HostKind;
+  /** True only on real serverless published hosts missing required env. */
   publishLikelyBroken: boolean;
+  /**
+   * True when this Node process can use the in-memory PGLite fallback
+   * (long-lived sandbox / local). False on Vercel/serverless where PGLite
+   * cannot persist across invocations.
+   */
+  pgliteUsable: boolean;
   issues: string[];
   hint: string;
 };
@@ -18,7 +25,10 @@ export type AuthRuntimeStatus = {
 function classifyHost(host: string | null): HostKind {
   if (!host) return "unknown";
   const h = host.toLowerCase();
-  if (h.includes("grok-sandbox.com") || h.includes("localhost") && h.includes("sandbox")) {
+  if (
+    h.includes("grok-sandbox.com") ||
+    (h.includes("localhost") && h.includes("sandbox"))
+  ) {
     return "sandbox";
   }
   if (h.endsWith(".grok-sandbox.com")) return "sandbox";
@@ -32,6 +42,26 @@ function classifyHost(host: string | null): HostKind {
     return "local";
   }
   return "unknown";
+}
+
+/**
+ * PGLite is only viable in a long-lived Node process (Grok sandbox live preview
+ * or local `npm run dev`). On Vercel/serverless the isolate dies after each
+ * request, so a missing DATABASE_URL is a hard production failure.
+ *
+ * Important: the live-preview proxy sometimes forwards `Host` /
+ * `x-forwarded-host` as the *published* `*.grok.me` name while the process is
+ * still the sandbox. Host alone must not decide that PGLite is unusable.
+ */
+export function pgliteUsableInThisRuntime(): boolean {
+  if (process.env.VERCEL) return false;
+  if (process.env.VERCEL_ENV) return false;
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) return false;
+  if (process.env.NETLIFY) return false;
+  // Grok app-builder sandbox always has this marker and never sets VERCEL.
+  if (process.env.GROK_AGENT || process.env.SANDBOX_SERVICE_ENV) return true;
+  // Local / unknown long-lived Node — allow PGLite.
+  return true;
 }
 
 function authMode(): AuthMode {
@@ -54,14 +84,20 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
   const hostKind = classifyHost(host);
   const mode = authMode();
   const database = databaseMode();
+  const pgliteUsable = pgliteUsableInThisRuntime();
   const hasBetterAuthUrl = Boolean(
     process.env.BETTER_AUTH_URL?.trim() || process.env.APP_PUBLIC_URL?.trim(),
   );
   const hasStableSecret = Boolean(process.env.BETTER_AUTH_SECRET?.trim());
   const authEnabled = mode !== "disabled";
 
+  // Only enforce published-host env when this process is actually serverless.
+  // Sandbox processes that happen to see a *.grok.me Host header still run
+  // PGLite + the preview OAuth client successfully.
+  const enforcePublishedEnv = hostKind === "published" && !pgliteUsable;
+
   const issues: string[] = [];
-  if (hostKind === "published") {
+  if (enforcePublishedEnv) {
     if (mode === "preview_client") {
       issues.push(
         "Published host is still using the preview sign-in client. Platform must inject GROK_AUTH_CLIENT_ID + GROK_AUTH_CLIENT_SECRET.",
@@ -82,20 +118,25 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
     }
   }
 
-  const publishLikelyBroken = hostKind === "published" && issues.length > 0;
+  const publishLikelyBroken = enforcePublishedEnv && issues.length > 0;
 
   return {
     authEnabled,
     mode,
     database,
     hasBetterAuthUrl:
-      hasBetterAuthUrl || hostKind === "sandbox" || hostKind === "local",
-    hasStableSecret: hasStableSecret || hostKind !== "published",
+      hasBetterAuthUrl ||
+      hostKind === "sandbox" ||
+      hostKind === "local" ||
+      pgliteUsable,
+    hasStableSecret: hasStableSecret || !enforcePublishedEnv,
     host,
     hostKind,
     publishLikelyBroken,
+    pgliteUsable,
     issues,
-    hint:
-      "Published sign-in needs platform env: GROK_AUTH_CLIENT_ID + SECRET, BETTER_AUTH_SECRET, BETTER_AUTH_URL (your https origin), and DATABASE_URL. Preview works without these; production does not.",
+    hint: pgliteUsable
+      ? "Live preview / local: PGLite + preview (or injected) auth client. Published serverless needs GROK_AUTH_*, BETTER_AUTH_*, and DATABASE_URL."
+      : "Published serverless sign-in needs platform env: GROK_AUTH_CLIENT_ID + SECRET, BETTER_AUTH_SECRET, BETTER_AUTH_URL (your https origin), and DATABASE_URL.",
   };
 }

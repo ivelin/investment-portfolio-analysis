@@ -11,7 +11,11 @@ function Login() {
   const { user, isPending } = useCurrentUserState();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /** Published host without durable DB — warn, but do not dead-end the CTAs. */
+  /**
+   * True only when this process is real serverless published without a durable
+   * DB. Live preview may forward a *.grok.me Host header but still runs PGLite
+   * successfully — that must NOT show the broken banner.
+   */
   const [publishStoragePending, setPublishStoragePending] = useState(false);
 
   useEffect(() => {
@@ -26,10 +30,8 @@ function Login() {
     getAuthStatusFn()
       .then((s) => {
         if (cancelled) return;
-        setPublishStoragePending(
-          s.hostKind === "published" &&
-            (s.database === "pglite" || s.publishLikelyBroken),
-        );
+        // Fail closed only when runtime cannot use PGLite AND publish is broken.
+        setPublishStoragePending(Boolean(s.publishLikelyBroken));
       })
       .catch(() => {
         /* keep buttons usable */
@@ -55,8 +57,8 @@ function Login() {
       // Plain language only — no env dumps on the login screen.
       setError(
         publishStoragePending
-          ? "This published link can’t save accounts yet. Use the live preview in chat to sign in and try the app now — or republish after storage is attached."
-          : "Sign-in didn’t work. Please try again.",
+          ? "This published link can’t save accounts yet. Use the live preview in chat to sign in, or republish after storage is attached."
+          : "Sign-in didn’t work. Please try again (allow pop-ups if prompted).",
       );
     } finally {
       setBusy(null);
@@ -83,14 +85,9 @@ function Login() {
             <div className="mt-4 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm leading-relaxed text-fg-muted">
               <p className="font-medium text-fg">Published sign-in not ready yet</p>
               <p className="mt-1">
-                Google and X are configured, but this published host still has no
-                durable account database. Sign-in will fail until the host
-                attaches storage and you republish.
-              </p>
-              <p className="mt-2">
-                <strong className="font-medium text-fg">What works now:</strong>{" "}
-                open this same app’s <strong className="font-medium text-fg">live preview</strong>{" "}
-                in the Grok chat — sign-in works there.
+                Providers are configured, but this serverless host has no durable
+                account database yet. Sign-in can’t persist sessions until storage
+                is attached on publish.
               </p>
             </div>
           ) : null}
