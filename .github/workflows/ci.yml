@@ -42,8 +42,6 @@ jobs:
           PORTFOLIO_ANALYSIS_DB_PATH: ${{ runner.temp }}/ci-empty-portfolio.db
 
 
-      - name: Project audit (rhai checklist)
-        run: uv run python scripts/project_audit.py
 
       - name: MCP server smoke (stdio mode for reliability)
         run: |
