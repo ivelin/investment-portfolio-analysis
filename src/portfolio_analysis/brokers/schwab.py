@@ -93,6 +93,7 @@ class SchwabBrokerAdapter:
                 display_name=row.display_name,
                 currency=row.currency,
                 broker_account_ref=row.broker_account_ref,
+                account_number_last3=getattr(row, "account_number_last3", None),
             )
             for row in self._live_rows()
         ]

@@ -435,6 +435,7 @@ def create_schema(conn: sqlite3.Connection) -> None:
             data_quality INTEGER NOT NULL DEFAULT 100,
             validated INTEGER NOT NULL DEFAULT 1,
             calc_timestamp TEXT,
+            provenance TEXT NOT NULL DEFAULT 'ground_truth',
             UNIQUE(broker, account_key, as_of_date)
         )
     """)
@@ -442,6 +443,16 @@ def create_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_daily_net_liq_acct_date "
         "ON daily_account_net_liq(broker, account_key, as_of_date)"
     )
+    # Migrate older DBs missing provenance (audit: GT snapshot vs reconstructed)
+    cols = {
+        row[1]
+        for row in cursor.execute("PRAGMA table_info(daily_account_net_liq)").fetchall()
+    }
+    if "provenance" not in cols:
+        cursor.execute(
+            "ALTER TABLE daily_account_net_liq "
+            "ADD COLUMN provenance TEXT NOT NULL DEFAULT 'ground_truth'"
+        )
 
     conn.commit()
 

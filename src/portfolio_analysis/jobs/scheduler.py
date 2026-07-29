@@ -6,10 +6,10 @@ import logging
 from typing import Any
 
 from .registry import (
-    CONNECTOR_SYNC_CRON,
     DAILY_NET_LIQ_CRON,
-    JOB_CONNECTOR_SYNC,
+    DATA_REFRESH_CRON,
     JOB_DAILY_NET_LIQ,
+    JOB_DATA_REFRESH,
     list_jobs,
 )
 from .runner import start_job
@@ -38,7 +38,7 @@ def scheduled_job_ids() -> list[str]:
 
 
 def start_scheduler(*, timezone: str = "America/Chicago") -> Any:
-    """Start BackgroundScheduler with both staggered hourly jobs.
+    """Start BackgroundScheduler with hourly local-first data_refresh.
 
     Safe to call once per process. Raises if APScheduler is not installed.
     """
@@ -57,35 +57,48 @@ def start_scheduler(*, timezone: str = "America/Chicago") -> Any:
 
     sched = BackgroundScheduler(timezone=timezone)
 
-    def _run_connector() -> None:
-        log.info("scheduled run: %s", JOB_CONNECTOR_SYNC)
+    def _run_refresh() -> None:
+        """Hourly: sync remote→GT, then maximize every reconstructible local NLV day.
+
+        Same pipeline as client-forced refresh_portfolio_data_tool. Does not pretend
+        the broker returned multi-day history; series lengthens from local raw.
+        """
+        log.info("scheduled run: %s (sync→maximize local derive)", JOB_DATA_REFRESH)
         start_job(
-            JOB_CONNECTOR_SYNC,
+            JOB_DATA_REFRESH,
             background=True,
             trigger="schedule",
-            force=False,
+            force=True,  # always attempt remote→GT feed; NLV still maximize_history
+            maximize_history=True,
+            allow_reconstruct=True,
+            on_insufficient="partial",
         )
 
-    def _run_net_liq() -> None:
-        log.info("scheduled run: %s", JOB_DAILY_NET_LIQ)
+    def _run_net_liq_topup() -> None:
+        """Mid-hour: re-derive only from local raw (no remote if refresh just ran)."""
+        log.info("scheduled run: %s (local derive top-up)", JOB_DAILY_NET_LIQ)
         start_job(
             JOB_DAILY_NET_LIQ,
             background=True,
             trigger="schedule",
-            force=False,
+            force=True,
+            pre_sync=False,
+            maximize_history=True,
+            allow_reconstruct=True,
+            on_insufficient="partial",
         )
 
     sched.add_job(
-        _run_connector,
-        CronTrigger(minute=CONNECTOR_SYNC_CRON["minute"], timezone=timezone),
-        id=JOB_CONNECTOR_SYNC,
+        _run_refresh,
+        CronTrigger(minute=DATA_REFRESH_CRON["minute"], timezone=timezone),
+        id=JOB_DATA_REFRESH,
         replace_existing=True,
         coalesce=True,
         max_instances=1,
         misfire_grace_time=300,
     )
     sched.add_job(
-        _run_net_liq,
+        _run_net_liq_topup,
         CronTrigger(minute=DAILY_NET_LIQ_CRON["minute"], timezone=timezone),
         id=JOB_DAILY_NET_LIQ,
         replace_existing=True,

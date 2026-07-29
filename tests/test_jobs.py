@@ -536,7 +536,9 @@ def test_cli_jobs_and_sync(isolated_home: Path, capsys, monkeypatch):
     main()
     listing = json.loads(capsys.readouterr().out)
     ids = {j["job_id"] for j in listing["jobs"]}
-    assert JOB_CONNECTOR_SYNC in ids and JOB_DAILY_NET_LIQ in ids
+    from portfolio_analysis.jobs.registry import JOB_DATA_REFRESH
+
+    assert JOB_DATA_REFRESH in ids and JOB_DAILY_NET_LIQ in ids
 
     monkeypatch.setattr(
         sys,
@@ -595,12 +597,15 @@ def test_scheduler_registers_both_jobs(isolated_home: Path):
     try:
         assert scheduler_started() is True
         ids = set(scheduled_job_ids())
-        assert JOB_CONNECTOR_SYNC in ids
+        from portfolio_analysis.jobs.registry import JOB_DATA_REFRESH
+
+        assert JOB_DATA_REFRESH in ids
         assert JOB_DAILY_NET_LIQ in ids
         st = scheduler_status()
         assert st["started"] is True
         catalog_ids = {j["job_id"] for j in st["catalog"]}
-        assert catalog_ids == {JOB_CONNECTOR_SYNC, JOB_DAILY_NET_LIQ}
+        assert JOB_DATA_REFRESH in catalog_ids
+        assert JOB_DAILY_NET_LIQ in catalog_ids
         # One-shot CLI path does not flip scheduler — already started in service only
     finally:
         stop_scheduler()

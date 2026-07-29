@@ -342,6 +342,26 @@ def run_connector_sync(
 
     lock: JobLock | None = None
     if not skip_lock:
+        # Pipeline holds data_refresh + connector_sync; do not race it
+        from portfolio_analysis.jobs.registry import JOB_DATA_REFRESH
+
+        if is_job_lock_held(JOB_DATA_REFRESH):
+            result = SyncRunResult(
+                ok=True,
+                skipped=True,
+                reason="already_running",
+                started_at=started,
+                finished_at=utc_now_iso(),
+                brokers=[],
+                lock_held=True,
+                demo=demo,
+                force=force,
+                min_interval_seconds=min_interval_seconds,
+                state="skipped",
+            )
+            path = write_job_status(job_id, result.to_public_dict())
+            result.status_path = str(path)
+            return result
         lock = JobLock(job_id)
         if not lock.try_acquire():
             result = SyncRunResult(

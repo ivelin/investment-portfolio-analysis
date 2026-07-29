@@ -7,12 +7,24 @@ Default local endpoint matches the operator's schwab-mcp service
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Sequence
 from datetime import date
 from typing import Any
 
 from .base import LiveAccountEquity, LivePosition
 from .mcp_transport import McpTransportConfig, call_mcp_tool_sync
+
+
+def _account_number_last3(sec: dict[str, Any]) -> str | None:
+    """Extract last-3 digits only from broker account number fields (never store full)."""
+    raw = sec.get("accountNumber") or sec.get("account_number")
+    if raw is None:
+        return None
+    digits = re.sub(r"\D", "", str(raw))
+    if len(digits) < 3:
+        return None
+    return digits[-3:]
 
 
 def stable_account_key(broker_account_ref: str, *, length: int = 12) -> str:
@@ -141,6 +153,7 @@ def parse_schwab_accounts_payload(
                 cash=cash,
                 source=source_label,
                 positions=positions,
+                account_number_last3=_account_number_last3(sec),
             )
         )
     return rows
