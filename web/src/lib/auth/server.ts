@@ -93,7 +93,13 @@ export const authConfigured =
 // it derives the origin per-request from the (proxied) host, validated against the
 // preview allowlist, which makes the OAuth `redirect_uri` the concrete preview URL
 // the broker's preview client accepts.
-const explicitBaseURL = env("BETTER_AUTH_URL");
+// Prefer explicit BETTER_AUTH_URL / APP_PUBLIC_URL. On Vercel, fall back to the
+// deployment host so preview URLs (*.vercel.app) work without a fixed env var.
+const vercelPublicUrl = env("VERCEL_URL")
+  ? `https://${env("VERCEL_URL")}`
+  : undefined;
+const explicitBaseURL =
+  env("BETTER_AUTH_URL") ?? env("APP_PUBLIC_URL") ?? vercelPublicUrl;
 // Explicit `string[]` (not a readonly tuple) — Better Auth's DynamicBaseURLConfig
 // requires a mutable `allowedHosts: string[]`.
 const previewAllowedHosts: string[] = [...PREVIEW_ALLOWED_HOSTS];
@@ -105,18 +111,18 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
-// Published Grok apps: also trust the concrete https origin when injected.
+// Hosts for dynamic baseURL when no single fixed origin is set.
+const DYNAMIC_ALLOWED_HOSTS: string[] = [
+  ...previewAllowedHosts,
+  "localhost",
+  "127.0.0.1",
+  "[::1]",
+  "*.grok.me",
+  // Vercel production + per-PR preview deployments
+  "*.vercel.app",
+];
 const baseURL = explicitBaseURL ?? {
-  // Include loopback hosts so dynamic baseURL resolves for local email/password
-  // (not only the preview wildcard). Also allow *.grok.me so published Host
-  // headers forwarded into preview still form a valid redirect_uri family.
-  allowedHosts: [
-    ...previewAllowedHosts,
-    "localhost",
-    "127.0.0.1",
-    "[::1]",
-    "*.grok.me",
-  ],
+  allowedHosts: DYNAMIC_ALLOWED_HOSTS,
   // `auto` → trust both http:// and https:// expansions of allowedHosts
   // (preview is https; local dev is http).
   protocol: "auto" as const,
@@ -125,20 +131,19 @@ const baseURL = explicitBaseURL ?? {
 
 // Origins Better Auth accepts on credentialed POSTs (sign-up/sign-in, etc.).
 // Missing entries here surface as FORBIDDEN "Invalid origin".
-const trustedOrigins: string[] = explicitBaseURL
-  ? [explicitBaseURL, ...LOCAL_DEV_ORIGINS, "https://*.grok.me"]
-  : [
-      // Host wildcards (matched against Origin's host)
-      ...previewAllowedHosts,
-      "*.grok.me",
-      // Full-origin wildcards (matched against Origin)
-      ...previewAllowedHosts.flatMap((host) => [
-        `https://${host}`,
-        `http://${host}`,
-      ]),
-      "https://*.grok.me",
-      ...LOCAL_DEV_ORIGINS,
-    ];
+const trustedOrigins: string[] = [
+  ...(explicitBaseURL ? [explicitBaseURL] : []),
+  ...LOCAL_DEV_ORIGINS,
+  "https://*.grok.me",
+  "https://*.vercel.app",
+  ...previewAllowedHosts,
+  "*.grok.me",
+  "*.vercel.app",
+  ...previewAllowedHosts.flatMap((host) => [
+    `https://${host}`,
+    `http://${host}`,
+  ]),
+];
 
 const databaseUrl = resolveDatabaseUrl();
 
