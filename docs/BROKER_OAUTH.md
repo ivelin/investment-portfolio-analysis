@@ -35,3 +35,10 @@ Decision helper (must stay MECE):
 - not due and not force → `skip`
 - due/force without refresh_token → `needs_reauth`
 - due/force with refresh_token → `refresh`
+
+## Path to success (product UX)
+
+1. User opens Connect → if app credentials missing, show setup guide (never a dead button).
+2. Register callback URL: `/api/v1/oauth/{broker}/callback` on the broker developer portal.
+3. Save app credentials (platform) then start user OAuth; callback exchanges code into **tenant-scoped** tokens only.
+4. Dashboard and MCP read the same tenant boundary.

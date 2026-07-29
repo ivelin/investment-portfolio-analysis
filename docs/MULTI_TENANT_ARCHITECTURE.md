@@ -116,3 +116,12 @@ Pure decision matrix (for tests / implementers):
 | present | false | no | * | skip |
 | present | true or near expiry | * | no | needs_reauth |
 | present | true or near expiry | * | yes | refresh |
+
+## SRE / CI expectations (every PR)
+
+- **Green CI required** before merge: lint + full test suite on `feature/**` and PRs.
+- **Fail closed** on auth, tenant membership, and missing OAuth state.
+- **No secrets** in git, fixtures, logs, or public API responses.
+- **DRY:** one decision helper for token refresh (`skip` | `refresh` | `needs_reauth`); one tenant boundary for web + MCP.
+- **MECE status labels** for connectors and jobs — no overlapping states.
+- **Path to success:** product UI never dead-ends; setup guides complete the OAuth callback flow.
