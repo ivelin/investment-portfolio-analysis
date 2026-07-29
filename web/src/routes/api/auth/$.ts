@@ -1,12 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { auth } from "@/lib/auth/server";
+import { auth, ensureAuthReady } from "@/lib/auth/server";
 
 /**
  * Better Auth catch-all. Wraps handler so published (Vercel) crashes return
  * JSON instead of empty HTTP 500 — makes login failures diagnosable.
+ * Awaits DB/migrations (Neon or PGLite) before the first auth query.
  */
 async function handleAuth(request: Request): Promise<Response> {
   try {
+    await ensureAuthReady();
     return await auth.handler(request);
   } catch (err) {
     const message =

@@ -12,4 +12,4 @@
 | **Security** | [docs/MULTI_TENANT_SECURITY.md](./docs/MULTI_TENANT_SECURITY.md) |
 
 ## Published login status
-Sign-in providers are configured; **production still needs `DATABASE_URL` (Neon)** before Google/X works on the published host. Preview is fine without it.
+Sign-in providers are configured. **App Neon wiring is done** (pool + migrations + auth). Production needs the host to inject `DATABASE_URL` on republish — check `GET /api/v1/health/auth` for `database: "neon"`. Preview uses PGLite and works without it.

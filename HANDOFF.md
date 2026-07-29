@@ -12,14 +12,24 @@
 | `docs/` | Multi-tenant architecture, security, broker OAuth |
 | `web/` | Hosted TanStack Start app (auth, tenants, brokers, legal) |
 
-## Published app (blocked)
+## Published app
 - URL: https://investment-portfolio-analysis.grok.me
-- Auth client **OK** (`GROK_AUTH_*` present)
-- **Missing `DATABASE_URL`** (Neon/Postgres) — login cannot work until platform injects it
-- Preview works without Neon (PGLite)
+- Stack: Grok App Builder (preview = PGLite, prod = Neon via `DATABASE_URL`)
+- Auth client **OK** (`GROK_AUTH_*` + `BETTER_AUTH_*` present on published host)
+- **App Neon wiring is complete** in `web/` (shared pool, runtime migrations, auth awaits DB ready)
+- Published host health still reports `database: pglite` until the **host injects `DATABASE_URL`** (agent cannot set env on `*.grok.me` from the sandbox)
+
+## Neon wiring (agent-owned — no user action)
+| Layer | Behavior |
+|-------|----------|
+| Preview | PGLite + `migrations/*.sql` on startup |
+| Prod code | `getPgPool()` / `getSql()` when `DATABASE_URL` is set; max-1 serverless pool |
+| Migrations | Build-time (`npm run db:migrate`) **and** runtime first connect (idempotent `_migrations`) |
+| Auth | Better Auth uses the same Neon pool; `/api/auth/*` awaits `ensureAuthReady()` |
+| Secrets | Never written to the worktree; platform injects on publish |
 
 ## Next steps (priority)
-1. Attach Neon / set `DATABASE_URL` on production → republish → verify Google/X login
+1. **Republish** the Grok app so the host attaches Neon (`DATABASE_URL`) — then verify `GET /api/v1/health/auth` shows `database: "neon"` and Google/X login works
 2. Keep UI copy plain (no env dumps on login)
 3. Per-tenant broker OAuth (Schwab/Robinhood) designed in `docs/` + `web/src/lib/portfolio/`
 4. Do not commit secrets, real balances, or PII

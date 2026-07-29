@@ -1,12 +1,7 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
-import {
-  GROK_PROVIDERS,
-  authEnabled,
-  formatSignInError,
-  signIn,
-} from "@/lib/auth/client";
+import { GROK_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { getAuthStatusFn } from "@/lib/auth/auth-status-queries";
 
@@ -22,9 +17,7 @@ function Login() {
     const params = new URLSearchParams(window.location.search);
     const qErr = params.get("error");
     if (qErr) {
-      setError(
-        "Sign-in didn’t finish. Please try again in a moment.",
-      );
+      setError("Sign-in didn’t finish. Please try again in a moment.");
       window.history.replaceState({}, "", "/login");
     }
 
@@ -62,7 +55,7 @@ function Login() {
       // Plain language only — no env dumps on the login screen.
       setError(
         needsSetup
-          ? "This published app still needs a database attached before sign-in can work. Preview is fine; production needs storage for your account."
+          ? "Published sign-in storage is still coming online. Try the live preview, or check back after the next publish."
           : "Sign-in didn’t work. Please try again.",
       );
     } finally {
@@ -90,10 +83,10 @@ function Login() {
             <div className="mt-4 rounded-[var(--radius-md)] border border-border bg-bg-subtle px-3 py-3 text-sm leading-relaxed text-fg-muted">
               <p className="font-medium text-fg">Almost ready</p>
               <p className="mt-1">
-                Your published app has sign-in providers, but no database yet.
-                Accounts need a place to live. Attach Postgres (Neon) to this
-                deployment, then publish again — or use the live preview until
-                then.
+                Sign-in providers are live; durable account storage on the
+                published host is finishing setup. Live preview sign-in works
+                now — published Google/X will unlock on the next full publish
+                once storage is attached.
               </p>
             </div>
           ) : null}

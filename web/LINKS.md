@@ -15,9 +15,9 @@ Easy reference links for this multi-tenant portfolio analysis work.
 | Environment | Why login works / fails |
 |-------------|-------------------------|
 | **Preview** (`*.grok-sandbox.com`) | Shared sandbox OAuth client — works out of the box (PGLite) |
-| **Published** (`*.grok.me`, etc.) | Needs **platform-injected** per-app auth: `GROK_AUTH_CLIENT_ID`, `GROK_AUTH_CLIENT_SECRET`, `BETTER_AUTH_URL` (or `APP_PUBLIC_URL`), `BETTER_AUTH_SECRET`, **`DATABASE_URL`** |
+| **Published** (`*.grok.me`, etc.) | Needs host-injected `GROK_AUTH_*`, `BETTER_AUTH_*`, **`DATABASE_URL` (Neon)** |
 
-**Current:** auth client is configured (`deployed_client`). **`DATABASE_URL` still missing** on production — check `GET /api/v1/health/auth`.
+**Current:** Auth client configured (`deployed_client`). **App Neon wiring complete** (shared pool, runtime migrations, auth awaits DB). Published host still needs **`DATABASE_URL` injection** — check `GET /api/v1/health/auth` for `database: "neon"`.
 
 ## Source & PR
 

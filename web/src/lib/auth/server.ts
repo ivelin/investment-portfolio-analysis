@@ -33,8 +33,7 @@ import { bearer, genericOAuth } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { getCookie } from "@tanstack/react-start/server";
 import { randomBytes } from "node:crypto";
-import { Pool } from "pg";
-import { ensureDbReady, getPglite } from "../db";
+import { dbSource, ensureDbReady, getPgPool, getPglite } from "../db";
 import { emailAndPasswordEnabled } from "./email-password";
 import { GROK_PROVIDERS } from "./providers";
 import { pgliteDialect } from "./pglite-dialect";
@@ -45,7 +44,8 @@ import {
   PREVIEW_CLIENT_SECRET,
 } from "./preview";
 
-// Kick (and share) PGLite bootstrap as soon as the auth server module loads.
+// Kick (and share) DB bootstrap as soon as the auth server module loads.
+// Neon: pool + migrations. PGLite: embedded DB + migrations.
 void ensureDbReady();
 
 /**
@@ -56,6 +56,8 @@ void ensureDbReady();
  */
 const globalAuthRef = globalThis as typeof globalThis & {
   __grokAuthPreviewSecret__?: string;
+  __grokAuthNeonPool__?: import("pg").Pool;
+  __grokAuthReady__?: Promise<void>;
 };
 function previewAuthSecret(): string {
   globalAuthRef.__grokAuthPreviewSecret__ ??= randomBytes(32).toString("hex");
@@ -134,13 +136,62 @@ const grokAuthorizationUrl = `${issuerBase}/api/auth/oauth2/authorize`;
 const grokTokenUrl = `${issuerBase}/api/auth/oauth2/token`;
 const grokUserInfoUrl = `${issuerBase}/api/auth/oauth2/userinfo`;
 
-// Real Postgres when `DATABASE_URL` is set (deployed apps), else the app's
-// embedded PGLite (preview) via a Kysely dialect — so Better Auth persists to the
-// SAME DB as app data, including email/password users. Both use the Better Auth
-// schema from `migrations/0001_auth.sql`.
-const database = databaseUrl
-  ? new Pool({ connectionString: databaseUrl })
-  : { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
+/**
+ * Better Auth database handle.
+ *
+ * Neon: shared Pool from `@/lib/db` (same process pool + migrations as app SQL).
+ * We hand a thenable-backed Pool proxy so the first auth query awaits migrations.
+ * PGLite: Kysely dialect over the embedded instance (same DB as app data).
+ */
+function createAuthDatabase():
+  | import("pg").Pool
+  | { dialect: ReturnType<typeof pgliteDialect>; type: "postgres" } {
+  if (!databaseUrl) {
+    return { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
+  }
+
+  // Lazy proxy: Better Auth calls pool.query/connect on demand. We resolve the
+  // shared migrated pool once, then forward. Avoids a second un-migrated Pool.
+  const target = { pool: null as import("pg").Pool | null };
+  const resolve = async () => {
+    target.pool ??= await getPgPool();
+    return target.pool;
+  };
+  globalAuthRef.__grokAuthReady__ ??= resolve().then(() => undefined);
+
+  const handler: ProxyHandler<import("pg").Pool> = {
+    get(_t, prop, receiver) {
+      if (prop === "then") return undefined; // not a Promise
+      if (prop === "query") {
+        return async (...args: unknown[]) => {
+          const pool = await resolve();
+          return (pool.query as (...a: unknown[]) => unknown)(...args);
+        };
+      }
+      if (prop === "connect") {
+        return async (...args: unknown[]) => {
+          const pool = await resolve();
+          return (pool.connect as (...a: unknown[]) => unknown)(...args);
+        };
+      }
+      if (prop === "end") {
+        return async (...args: unknown[]) => {
+          if (!target.pool) return;
+          return target.pool.end(...(args as []));
+        };
+      }
+      // Sync property reads (e.g. totalCount) after pool exists; otherwise 0/undefined.
+      if (target.pool) {
+        const value = Reflect.get(target.pool, prop, receiver);
+        return typeof value === "function" ? value.bind(target.pool) : value;
+      }
+      return undefined;
+    },
+  };
+  return new Proxy({} as import("pg").Pool, handler);
+}
+
+const database = createAuthDatabase();
 
 /** Session token cookie name — also read by the live-preview popup completion page. */
 export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
@@ -243,6 +294,15 @@ export const auth = betterAuth({
     tanstackStartCookies(),
   ],
 });
+
+/** Await before handling auth traffic so Neon migrations finish first. */
+export function ensureAuthReady(): Promise<void> {
+  return ensureDbReady().then(() => {
+    if (dbSource === "neon" && globalAuthRef.__grokAuthReady__) {
+      return globalAuthRef.__grokAuthReady__;
+    }
+  });
+}
 
 export function readSessionToken(): string | null {
   return getCookie(SESSION_TOKEN_COOKIE) ?? null;
