@@ -127,6 +127,10 @@ coverage_report_*.csv
 *report*.pdf
 *detailed*twrr*.txt
 twrr_report*.*
+# Ad-hoc chart PNGs dropped in the worktree (use instance reports/ instead)
+*_twrr*.png
+*_twrr_ohlc*.png
+*_chart*.png
 # Keep the reusable CLI helper (not a generated artifact)
 !tools/twrr_report.py
 ytd_report*.*
