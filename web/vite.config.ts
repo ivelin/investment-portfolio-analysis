@@ -129,6 +129,14 @@ export default defineConfig(({ command }) => ({
     host: "0.0.0.0",
     port: 8080,
     strictPort: true,
+    // Live preview / Grok CLI tunnel hosts (Host header differs from bind host).
+    allowedHosts: [
+      ".grok-sandbox.com",
+      ".grok.me",
+      ".vercel.app",
+      "localhost",
+      "127.0.0.1",
+    ],
   },
   resolve: { tsconfigPaths: true },
   plugins: [

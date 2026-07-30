@@ -7,16 +7,19 @@
  *
  *   Phase 1 (`?providerId=…`): start OAuth server-side and 302 straight to the
  *     broker / upstream login page. The popup never paints the app.
- *   Phase 2 (`?done=1`): after the broker round-trip, emit a tiny HTML page that
- *     posts the session token to the opener and closes. No SPA hydrate, no
- *     server-fn round-trip.
+ *   Phase 2 (`?done=1`): after the OAuth round-trip, emit a tiny HTML page that
+ *     posts the session token to the opener and closes.
  *
- * Wired automatically by the Vite `authPopupPlugin` in `vite.config.ts` during
- * `npm run dev` (live preview). Do NOT create `src/routes/auth/popup.tsx` — a
- * React route here paints the full app shell in the popup. The opener lives in
- * `client.ts` (`signIn` → `openSignInPopup`).
+ * Supports:
+ *   - direct_social → signInSocial (Google / X)
+ *   - grok_broker → signInWithOAuth2 (auth.grok.me) with absolute redirect_uri
+ *
+ * Wired by Vite `authPopupPlugin` in `vite.config.ts`. Do NOT create a React
+ * route at `src/routes/auth/popup.tsx`.
  */
 import { auth, SESSION_TOKEN_COOKIE } from "./server";
+import { resolveAuthBackendMode } from "./social-config";
+import { fixOAuthAuthorizeUrl } from "./oauth-redirect";
 
 /** Message shape the popup posts to the opener (must match `client.ts`). */
 type PopupMessage = {
@@ -45,7 +48,6 @@ export async function handleAuthPopupRequest(request: Request): Promise<Response
       status: 200,
       headers: {
         "content-type": "text/html; charset=utf-8",
-        // Never cache a page that embeds a session token.
         "cache-control": "no-store",
       },
     });
@@ -59,14 +61,31 @@ export async function handleAuthPopupRequest(request: Request): Promise<Response
     });
   }
 
+  if (providerId !== "google" && providerId !== "twitter") {
+    return completionResponse({
+      source: "grok-auth-popup",
+      token: null,
+      error: "unknown_provider",
+    });
+  }
+
+  const mode = resolveAuthBackendMode(process.env);
+  if (mode !== "direct_social" && mode !== "grok_broker") {
+    return completionResponse({
+      source: "grok-auth-popup",
+      token: null,
+      error: "auth_unconfigured",
+    });
+  }
+
   // Stay first-party for the callback so the session cookie lands in THIS popup.
   const back = `${url.origin}/auth/popup?done=1`;
   try {
-    // Prefer direct social (google/twitter). Response is always truthy even when
+    // Prefer direct social when registered. Response is always truthy even when
     // !ok — only treat ok responses as success; otherwise fall through to
     // generic OAuth2 (grok_broker / empty socialProviders).
     let apiRes: Response | null = null;
-    if (providerId === "google" || providerId === "twitter") {
+    if (mode === "direct_social") {
       try {
         const social = await auth.api.signInSocial({
           body: {
@@ -106,7 +125,7 @@ export async function handleAuthPopupRequest(request: Request): Promise<Response
     const body = (await apiRes.json().catch(() => null)) as {
       url?: string;
     } | null;
-    const location = body?.url;
+    let location = body?.url;
     if (!location) {
       return completionResponse({
         source: "grok-auth-popup",
@@ -115,8 +134,10 @@ export async function handleAuthPopupRequest(request: Request): Promise<Response
       });
     }
 
-    // 302 to the broker (which headlessly forwards to Google/X). Forward any
-    // Set-Cookie (OAuth state / PKCE) so the callback can complete in this popup.
+    // Critical: broker rejects relative redirect_uri. Force absolute under
+    // the public popup origin (x-forwarded-host when present).
+    location = fixOAuthAuthorizeUrl(location, url.origin);
+
     const headers = new Headers({ location, "cache-control": "no-store" });
     for (const cookie of apiRes.headers.getSetCookie()) {
       headers.append("set-cookie", cookie);
@@ -144,8 +165,6 @@ function completionResponse(message: PopupMessage): Response {
 
 /** Minimal HTML: postMessage the token to the opener and close. No React. */
 function completionHtml(message: PopupMessage): string {
-  // JSON is safe inside a <script type="application/json"> block; the inline
-  // script only reads it. Avoids escaping pitfalls of embedding in JS source.
   const payload = JSON.stringify(message).replace(/</g, "\\u003c");
   return `<!doctype html>
 <html lang="en">

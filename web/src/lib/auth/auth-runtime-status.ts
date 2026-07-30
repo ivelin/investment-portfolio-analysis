@@ -2,6 +2,7 @@ import { databaseEnvPresence, hasDatabaseUrl } from "../db-url";
 import { pgliteUsableInThisRuntime } from "../runtime-env";
 import {
   hasDirectSocialEnv,
+  isGrokBrokerDisabled,
   isVercelRuntime,
   resolveAuthBackendMode,
 } from "./social-config";
@@ -62,6 +63,7 @@ function authMode(): AuthMode {
   if (backend === "direct_social") return "direct_social";
   if (backend === "unconfigured") return "unconfigured";
   if (backend === "disabled") return "disabled";
+  // backend === grok_broker
   if (process.env.GROK_AUTH_CLIENT_ID && process.env.GROK_AUTH_CLIENT_SECRET) {
     return "deployed_client";
   }
@@ -94,9 +96,9 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
 
   const issues: string[] = [];
   if (enforcePublishedEnv) {
-    if (mode === "unconfigured" || mode === "preview_client") {
+    if (isVercelRuntime() && (mode === "unconfigured" || mode === "preview_client")) {
       issues.push(
-        "Social sign-in needs GOOGLE_CLIENT_ID/SECRET and/or TWITTER_CLIENT_ID/SECRET on this host (Vercel does not use auth.grok.me).",
+        "Social sign-in needs GOOGLE_CLIENT_ID/SECRET and/or TWITTER_CLIENT_ID/SECRET on Vercel (not auth.grok.me).",
       );
     }
     if (database === "pglite") {
@@ -127,10 +129,12 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
     pgliteUsable,
     databaseEnv,
     issues,
-    hint: pgliteUsable
-      ? "Local/sandbox: PGLite. Optional Grok broker for sandbox only. Vercel uses GOOGLE_*/TWITTER_* + Neon."
-      : hasDirectSocialEnv()
-        ? "Direct Google/X social + Better Auth on this origin; sessions need DATABASE_URL (Neon)."
-        : "Set GOOGLE_CLIENT_ID/SECRET and TWITTER_CLIENT_ID/SECRET plus BETTER_AUTH_SECRET and DATABASE_URL. Do not use auth.grok.me on Vercel.",
+    hint: hasDirectSocialEnv()
+      ? "Direct Google/X social + Better Auth on this origin; sessions need DATABASE_URL (Neon) on published hosts."
+      : mode === "preview_client" || mode === "deployed_client"
+        ? "Grok broker (auth.grok.me) for sandbox/CLI; absolute redirect_uri required. Vercel uses GOOGLE_*/TWITTER_* instead."
+        : isGrokBrokerDisabled()
+          ? "Grok broker disabled (AUTH_DISABLE_GROK_BROKER). Set GOOGLE_*/TWITTER_* for direct social."
+          : "Set GOOGLE_*/TWITTER_* for direct social, or use non-Vercel Grok broker path for sandbox/CLI.",
   };
 }

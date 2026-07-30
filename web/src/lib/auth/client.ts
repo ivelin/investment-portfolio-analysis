@@ -1,14 +1,15 @@
 import { genericOAuthClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
 import { isSocialProviderId } from "./providers";
+import { fixOAuthAuthorizeUrl } from "./oauth-redirect";
 
 /**
  * Better Auth client for this React SPA (browser-side).
  *
  * Talks to this app's OWN Better Auth at same-origin `/api/auth/*`.
- * Sign-in: Better Auth `signIn.social` (Google / X) on Vercel and any host
- * with direct OAuth env. Grok sandbox iframe still uses popup + oauth2 when
- * the server is in grok_broker mode.
+ * - Direct social (GOOGLE_ / TWITTER_ env): signIn.social → Google or X
+ * - Grok broker (sandbox / CLI / non-Vercel): signIn.oauth2 → auth.grok.me
+ * Live-preview iframe uses popup + /auth/popup so cookies stay first-party.
  */
 export const authClient = createAuthClient({
   plugins: [genericOAuthClient()],
@@ -63,11 +64,17 @@ type PopupMessage = {
   error?: string;
 };
 
+function withAbsoluteRedirect(url: string): string {
+  if (typeof window === "undefined") return url;
+  return fixOAuthAuthorizeUrl(url, window.location.origin);
+}
+
 /**
  * Start sign-in with Google or X (`providerId`: `google` | `twitter`).
  *
- * - **Vercel / direct social:** full-page `signIn.social` → Google/X authorize.
- * - **Grok live-preview iframe:** popup to `/auth/popup` (broker or social).
+ * - Direct social: full-page signIn.social → Google/X authorize.
+ * - Grok broker: signIn.oauth2 → auth.grok.me (absolute redirect_uri).
+ * - Live-preview iframe: popup to /auth/popup.
  */
 export async function signIn(
   providerId: string,
@@ -115,20 +122,21 @@ export async function signIn(
     return;
   }
 
-  // Prefer direct social (Google / X). On grok_broker hosts socialProviders is
-  // empty, so social fails — fall through to generic oauth2 (do not throw first).
+  // Prefer direct social. On grok_broker hosts socialProviders is empty, so
+  // social fails — fall through to generic oauth2 (do not throw first).
   const social = await authClient.signIn.social({
     provider: providerId,
     callbackURL,
     errorCallbackURL,
   });
   if (!social.error) {
-    if (social.data?.url) window.location.href = social.data.url;
+    if (social.data?.url) {
+      window.location.href = withAbsoluteRedirect(social.data.url);
+    }
     return;
   }
 
-  // Residual broker-configured local/sandbox: genericOAuth provider ids match
-  // google | twitter buttons.
+  // Grok broker (sandbox / CLI / non-Vercel)
   const oauth2 = await authClient.signIn.oauth2({
     providerId,
     callbackURL,
@@ -139,7 +147,9 @@ export async function signIn(
       oauth2.error.message ?? social.error.message ?? "Sign-in failed",
     );
   }
-  if (oauth2.data?.url) window.location.href = oauth2.data.url;
+  if (oauth2.data?.url) {
+    window.location.href = withAbsoluteRedirect(oauth2.data.url);
+  }
 }
 
 function openSignInPopup(providerId: string): Window | null {

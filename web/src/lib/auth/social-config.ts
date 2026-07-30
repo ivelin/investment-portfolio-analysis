@@ -2,9 +2,10 @@
  * Pure auth-backend selection (no Better Auth / pg imports).
  * Used by server.ts and unit tests.
  *
- * Prefer direct Google + X (Twitter) OAuth on Vercel and any host that has
- * GOOGLE_* / TWITTER_* env. Never fall through to the Grok auth broker on
- * Vercel (*.vercel.app / VERCEL=1).
+ * Preference order:
+ * 1. Direct Google + X when GOOGLE_* / TWITTER_* are set (Vercel product path)
+ * 2. Grok broker for non-Vercel (sandbox preview, Grok CLI, *.grok.me)
+ * 3. unconfigured on Vercel without social env (never silent Grok on Vercel)
  */
 
 export type SocialProviderId = "google" | "twitter";
@@ -44,20 +45,26 @@ export function hasExplicitGrokClient(env: EnvLike = process.env): boolean {
   );
 }
 
+/** Opt-out: set AUTH_DISABLE_GROK_BROKER=true to force unconfigured without social. */
+export function isGrokBrokerDisabled(env: EnvLike = process.env): boolean {
+  return trim(env, "AUTH_DISABLE_GROK_BROKER") === "true";
+}
+
 /**
  * Which auth backend this process should use.
  *
  * - disabled: VITE_AUTH_ENABLED=false
  * - direct_social: GOOGLE_* and/or TWITTER_* present
- * - grok_broker: non-Vercel only (Grok sandbox / local), explicit or preview client
- * - unconfigured: Vercel (or any host) with neither direct social nor (non-Vercel) broker
+ * - grok_broker: non-Vercel Grok sandbox / CLI / local (unless disabled)
+ * - unconfigured: Vercel without social env, or broker explicitly disabled
  */
 export function resolveAuthBackendMode(env: EnvLike = process.env): AuthBackendMode {
   if (trim(env, "VITE_AUTH_ENABLED") === "false") return "disabled";
   if (hasDirectSocialEnv(env)) return "direct_social";
   // Never use Grok broker / preview client on Vercel deploys.
   if (isVercelRuntime(env)) return "unconfigured";
-  // Local / Grok sandbox: allow broker (preview client or injected GROK_AUTH_*).
+  if (isGrokBrokerDisabled(env)) return "unconfigured";
+  // Grok sandbox live preview, CLI, local, *.grok.me — shared broker path.
   return "grok_broker";
 }
 

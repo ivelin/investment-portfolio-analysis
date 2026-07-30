@@ -1,55 +1,100 @@
 # Handoff — multi-tenant portfolio platform
 
+**Status date:** 2026-07-30
+
 ## Remote
 
 - Repo: https://github.com/ivelin/investment-portfolio-analysis
-- **Active branch:** `main` (multi-tenant product + Vercel/Neon CI + Google/X social auth)
-- Historical: PR #5 multi-tenant land; PR #6 Vercel previews + social auth
+- **Active branch:** `main`
 - Naming: **investment-portfolio-analysis** on GitHub, Vercel, and Neon
+- History: PR #5 multi-tenant land; PR #6 Vercel previews + social auth; later docs PRs
 
-## Layout (multi-tenant only)
+## Hosting decision (current truth)
+
+| Target | Role | Status (2026-07-30) |
+|--------|------|---------------------|
+| **Vercel + Neon** | **Production path** | Live deploy + Neon `DATABASE_URL` + `BETTER_AUTH_SECRET`. Social login **blocked** until `GOOGLE_*` / `TWITTER_*` are set on the Vercel project. |
+| **Grok App Build publish** (`*.grok.me`) | **Not product** | Broken: platform does not inject `DATABASE_URL`; Grok Build CLI cannot configure grok.me auth or Neon for this app. **Revisit ~mid–late Aug 2026** to see if Grok App Publish + CLI handoff improved. |
+| **Grok sandbox / CLI preview** (`*.grok-sandbox.com`) | Agent live preview only | Optional **Grok broker** (`auth.grok.me`, `grok_preview`) when no direct social env; absolute `redirect_uri` required (fixed in app). |
+
+**Do not** treat `*.grok.me` as production. Product login is **direct Google + X** via Better Auth on the app origin (`/api/auth/*`), never the Grok broker on Vercel.
+
+Prod URL (project alias):
+
+https://investment-portfolio-analysis-ivelins-projects-9f9b7132.vercel.app
+
+Health: `GET {host}/api/v1/health/auth` — want `mode: "direct_social"`, `database: "neon"`, `publishLikelyBroken: false`.
+
+## Auth product truth
+
+See [web/docs/AUTH.md](web/docs/AUTH.md).
+
+| Backend | When |
+|---------|------|
+| **direct_social** | `GOOGLE_*` and/or `TWITTER_*` set → Better Auth `socialProviders` |
+| **grok_broker** | Non-Vercel only, no social env (sandbox/CLI) → `genericOAuth` → `auth.grok.me` |
+| **unconfigured** | Vercel without social env (**fail closed** — never silent Grok) |
+
+Email/password is **off**.
+
+### Invalid redirect URI (fixed in code)
+
+Grok broker was receiving relative `redirect_uri=/oauth2/callback/twitter` → `{"message":"Invalid redirect URI"}`.
+
+App now:
+
+1. Dynamic `baseURL` from Host / trusted proxy headers
+2. Rewrites authorize URLs so `redirect_uri` is absolute (`oauth-redirect.ts`, server hook, client, popup)
+
+```text
+https://<preview-host>/api/auth/oauth2/callback/twitter
+```
+
+### Vercel OAuth callbacks (register in Google / X developer consoles)
+
+```text
+https://<deployment-host>/api/auth/callback/google
+https://<deployment-host>/api/auth/callback/twitter
+```
+
+Also authorize JS origins for each host (or use a stable production domain).
+
+### Blocker for end-to-end X login
+
+As of 2026-07-30 prod health:
+
+- `database: "neon"` ✓
+- `hasStableSecret: true` ✓
+- `mode: "unconfigured"` — **missing `GOOGLE_CLIENT_ID/SECRET` and/or `TWITTER_CLIENT_ID/SECRET` on Vercel**
+
+Until those env vars are set on the Vercel project (Preview + Production), sign-in buttons stay disabled on Vercel and full X OAuth cannot be verified.
+
+## Grok App / Build CLI — revisit window
+
+**Parked until ~mid–late August 2026 (1–2 weeks from 2026-07-30).**
+
+Check then whether:
+
+1. Grok App **production Publish** injects durable `DATABASE_URL` (Neon or equivalent)
+2. Grok Build **CLI** can configure or pass through OAuth / env for published `*.grok.me` hosts
+3. Broker `redirect_uri` / preview client still matches sandbox hosts
+
+Until then: ship and operate on **Vercel + Neon + direct Google/X only**.
+
+## Layout
 
 | Path | What |
 |------|------|
 | `web/` | Entire product: TanStack Start app, auth, tenants, brokers, legal, REST + MCP |
 | `docs/` | Architecture, security, broker OAuth, product design |
 | `scripts/git-hooks/` | pre-push → `make ci` |
-
-There is **no** single-user Python CLI/MCP stack in this repository.
-
-## Deployments
-
-| Host | URL | DB | Auth | Login |
-|------|-----|----|------|-------|
-| **Vercel + Neon (prod path)** | https://investment-portfolio-analysis-ivelins-projects-9f9b7132.vercel.app (and project aliases) | **Neon** when Marketplace / env injects `DATABASE_URL` | Better Auth **direct Google + X** (`GOOGLE_*` / `TWITTER_*`); **not** Grok broker | Durable sessions when Neon + social env set; email/password **off** |
-| **Grok publish** | https://ivesting-portfolio-analysis.grok.me | **No `DATABASE_URL`** (platform gap) | Grok injects `GROK_AUTH_*` but app still needs a DB for sessions | **Broken** until host injects Neon — agents cannot set `*.grok.me` env |
-
-Health checks:
-
-- `GET {host}/api/v1/health/auth`
-- `GET {host}/api/auth/ok`
-
-Auth product truth (do not regress): [web/docs/AUTH.md](web/docs/AUTH.md) — Google + X only; no email/password; Vercel never falls through to `auth.grok.me`. CI/deploy: [web/docs/CICD.md](web/docs/CICD.md).
-
-## Why grok.me stays broken
-
-Grok injects `GROK_AUTH_*` + `BETTER_AUTH_*` but **not** `DATABASE_URL` for this app.
-Serverless cannot use PGLite across OAuth redirects. App code fail-closes cleanly
-(`AUTH_NO_DATABASE`) instead of crashing on missing WASM.
-
-Gitignored sandbox bootstrap (`web/src/lib/db-bootstrap.secret.ts`) only helps if
-the **Grok build includes that sandbox file**. Builds from public git alone never
-ship it (and must not — secrets). Prefer platform-injected `DATABASE_URL`.
-
-**Do not** treat adding `GROK_AUTH_*` on Vercel as the primary login fix. Vercel
-login is **direct Google/X** + Neon (`DATABASE_URL` + `BETTER_AUTH_SECRET` +
-`GOOGLE_*` / `TWITTER_*`). See AUTH.md.
+| `startup.sh` | Sandbox revive: start `web` on `0.0.0.0:8080` |
 
 ## Stack
 
 - **UI/API/MCP:** one deployable under `web/`
 - **Domain SSOT:** `web/src/lib/portfolio/service.server.ts`
-- **Auth:** Better Auth socialProviders (Google + X) on Vercel; Grok broker only for non-Vercel local/sandbox when social env is absent; `requireApiPrincipal` for REST/MCP
+- **Auth:** Better Auth socialProviders (Google + X) on Vercel; Grok broker only non-Vercel without social env
 - **DB:** Neon on Vercel; PGLite for local `npm run dev` only
 - **CI:** GitHub Actions `web` + `vercel-deploy` + local `make ci` (coverage ≥80%)
 
@@ -62,8 +107,7 @@ make ci                            # same from repo root (pre-push)
 make install-hooks                 # pre-push runs make ci
 ```
 
-Coverage policy: [web/docs/COVERAGE.md](web/docs/COVERAGE.md). Tests live under
-`web/scripts/test-*.mjs` (domain) and `web/tests/{api,mcp,e2e}/`.
+Coverage: [web/docs/COVERAGE.md](web/docs/COVERAGE.md). CI/CD: [web/docs/CICD.md](web/docs/CICD.md).
 
 ## Product rules
 
@@ -75,11 +119,9 @@ Coverage policy: [web/docs/COVERAGE.md](web/docs/COVERAGE.md). Tests live under
 
 ## Next steps
 
-1. **Vercel prod login:** set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` and
-   `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (plus existing Neon +
-   `BETTER_AUTH_SECRET`); register OAuth callback URLs per AUTH.md
-2. **Optional CI:** `VERCEL_AUTOMATION_BYPASS_SECRET` for full health under
-   Deployment Protection (see CICD.md)
-3. **Grok.me (optional / legacy):** needs platform `DATABASE_URL` on
-   `ivesting-portfolio-analysis.grok.me` — not fixable from public git alone
-4. Continue broker OAuth and portfolio engines in `web/`
+1. **Set Vercel env (required for login):** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TWITTER_CLIENT_ID`, `TWITTER_CLIENT_SECRET` (Preview + Production); register callback URLs above
+2. Redeploy / merge so health reports `mode: "direct_social"`
+3. Manually complete Sign in with X on prod; confirm session + dashboard
+4. Optional: `VERCEL_AUTOMATION_BYPASS_SECRET` for full CI health under Deployment Protection
+5. **~mid–late Aug 2026:** re-evaluate Grok App Publish + Build CLI (see section above)
+6. Continue broker OAuth connectors and portfolio engines in `web/`

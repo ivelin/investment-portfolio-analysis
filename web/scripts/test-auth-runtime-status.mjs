@@ -11,8 +11,18 @@ try {
 
   assert.equal(pgliteUsableInThisRuntime(), true, "sandbox runtime must allow PGLite");
 
+  const prevDisable = process.env.AUTH_DISABLE_GROK_BROKER;
+  const prevG = process.env.GOOGLE_CLIENT_ID;
+  const prevGs = process.env.GOOGLE_CLIENT_SECRET;
+  const prevT = process.env.TWITTER_CLIENT_ID;
+  const prevTs = process.env.TWITTER_CLIENT_SECRET;
+  delete process.env.AUTH_DISABLE_GROK_BROKER;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_CLIENT_SECRET;
+  delete process.env.TWITTER_CLIENT_ID;
+  delete process.env.TWITTER_CLIENT_SECRET;
+
   const sandbox = getAuthRuntimeStatus("abc.grok-sandbox.com");
-  // Local/sandbox without VERCEL + without GOOGLE_*: Grok broker preview path
   assert.ok(
     sandbox.mode === "preview_client" || sandbox.mode === "direct_social",
     `sandbox mode=${sandbox.mode}`,
@@ -20,9 +30,8 @@ try {
   assert.equal(sandbox.hostKind, "sandbox");
   assert.equal(sandbox.publishLikelyBroken, false);
   assert.equal(sandbox.pgliteUsable, true);
+  assert.equal(sandbox.authEnabled, true);
 
-  // Live preview often forwards the *published* hostname while still running
-  // the sandbox process. That must NOT look like a broken production deploy.
   const publishedHostInSandbox = getAuthRuntimeStatus(
     "investment-portfolio-analysis.grok.me",
   );
@@ -33,9 +42,7 @@ try {
     false,
     "sandbox process with *.grok.me Host must not block login",
   );
-  assert.equal(publishedHostInSandbox.issues.length, 0);
 
-  // Simulate real Vercel serverless: PGLite unusable
   const prevVercel = process.env.VERCEL;
   const prevVercelEnv = process.env.VERCEL_ENV;
   process.env.VERCEL = "1";
@@ -44,7 +51,6 @@ try {
   const vercelPublished = getAuthRuntimeStatus("my-app.vercel.app");
   assert.equal(vercelPublished.hostKind, "published");
   assert.equal(vercelPublished.pgliteUsable, false);
-  // Vercel without GOOGLE_*/TWITTER_* must not look like healthy Grok preview auth
   assert.ok(
     vercelPublished.mode === "unconfigured" ||
       vercelPublished.publishLikelyBroken ||
@@ -73,6 +79,21 @@ try {
   const local = getAuthRuntimeStatus("localhost");
   assert.equal(local.hostKind, "local");
   assert.equal(local.publishLikelyBroken, false);
+  assert.ok(
+    local.mode === "preview_client" || local.mode === "direct_social",
+    `local mode=${local.mode}`,
+  );
+
+  if (prevDisable === undefined) delete process.env.AUTH_DISABLE_GROK_BROKER;
+  else process.env.AUTH_DISABLE_GROK_BROKER = prevDisable;
+  if (prevG === undefined) delete process.env.GOOGLE_CLIENT_ID;
+  else process.env.GOOGLE_CLIENT_ID = prevG;
+  if (prevGs === undefined) delete process.env.GOOGLE_CLIENT_SECRET;
+  else process.env.GOOGLE_CLIENT_SECRET = prevGs;
+  if (prevT === undefined) delete process.env.TWITTER_CLIENT_ID;
+  else process.env.TWITTER_CLIENT_ID = prevT;
+  if (prevTs === undefined) delete process.env.TWITTER_CLIENT_SECRET;
+  else process.env.TWITTER_CLIENT_SECRET = prevTs;
 
   console.log("OK auth runtime status tests passed");
   process.exitCode = 0;

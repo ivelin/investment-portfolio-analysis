@@ -1,18 +1,18 @@
 /**
  * Self-hosted Better Auth for THIS app (server-only).
  *
- * Sign-in (product path on Vercel):
- *   Better Auth **socialProviders** for Google + X (Twitter) using env
- *   `GOOGLE_CLIENT_ID/SECRET` and `TWITTER_CLIENT_ID/SECRET`. Sessions live on
- *   this origin at `/api/auth/*`. Email/password stays off.
+ * Sign-in paths:
+ *   1. **Direct social** (Vercel / any host with GOOGLE_* / TWITTER_*):
+ *      Better Auth socialProviders → Google / X.
+ *   2. **Grok broker** (sandbox preview, Grok CLI, non-Vercel without social env):
+ *      genericOAuth → auth.grok.me. Preview client accepts
+ *      `https://*.grok-sandbox.com/api/auth/oauth2/callback/*`.
+ *      Deployed grok.me uses injected GROK_AUTH_* client.
  *
- * Legacy Grok broker (non-Vercel only):
- *   genericOAuth → auth.grok.me when not on Vercel and direct social env is
- *   absent (local / Grok sandbox). Never used as a Vercel fallback.
- *
- * NEVER import this from client code. Client: `@/lib/auth/client`.
+ * Email/password stays off. NEVER import from client code.
  */
 import { betterAuth } from "better-auth";
+import { createAuthMiddleware } from "better-auth/api";
 import { bearer, genericOAuth } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { getCookie } from "@tanstack/react-start/server";
@@ -29,6 +29,10 @@ import {
   PREVIEW_CLIENT_ID,
   PREVIEW_CLIENT_SECRET,
 } from "./preview";
+import {
+  fixOAuthAuthorizeUrl,
+  originFromAuthBaseURL,
+} from "./oauth-redirect";
 import {
   buildSocialProvidersFromEnv,
   isAuthConfigured,
@@ -54,7 +58,7 @@ const env = (key: string): string | undefined => {
 const authDisabled = env("VITE_AUTH_ENABLED") === "false";
 const backendMode = resolveAuthBackendMode(process.env);
 
-/** True when real sign-in is available (direct social or non-Vercel Grok broker). */
+/** True when real sign-in is available (direct social or Grok broker). */
 export const authConfigured = !authDisabled && isAuthConfigured(process.env);
 
 export const authBackendMode = backendMode;
@@ -71,13 +75,21 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
+/**
+ * Hosts Better Auth may derive baseURL from (Host / x-forwarded-host).
+ * Include :port variants — exact match does not strip ports.
+ */
 const DYNAMIC_ALLOWED_HOSTS: string[] = [
   ...previewAllowedHosts,
   "localhost",
+  "localhost:8080",
   "127.0.0.1",
+  "127.0.0.1:8080",
   "[::1]",
+  "[::1]:8080",
   "*.grok.me",
   "*.vercel.app",
+  "*.grok-sandbox.com",
 ];
 const baseURL = explicitBaseURL ?? {
   allowedHosts: DYNAMIC_ALLOWED_HOSTS,
@@ -90,9 +102,11 @@ const trustedOrigins: string[] = [
   ...LOCAL_DEV_ORIGINS,
   "https://*.grok.me",
   "https://*.vercel.app",
+  "https://*.grok-sandbox.com",
   ...previewAllowedHosts,
   "*.grok.me",
   "*.vercel.app",
+  "*.grok-sandbox.com",
   ...previewAllowedHosts.flatMap((host) => [
     `https://${host}`,
     `http://${host}`,
@@ -208,6 +222,44 @@ const grokOAuthPlugin =
       })()
     : null;
 
+/**
+ * After sign-in/oauth2 (and social), rewrite relative redirect_uri on the
+ * authorize URL. Empty dynamic baseURL produced `/oauth2/callback/…` which
+ * auth.grok.me rejects as Invalid redirect URI.
+ */
+const absoluteOAuthRedirectPlugin = {
+  id: "absolute-oauth-redirect-uri",
+  hooks: {
+    after: [
+      {
+        matcher(ctx: { path?: string }) {
+          const p = ctx.path ?? "";
+          return (
+            p === "/sign-in/oauth2" ||
+            p === "/sign-in/social" ||
+            p.startsWith("/sign-in/oauth2") ||
+            p.startsWith("/sign-in/social")
+          );
+        },
+        handler: createAuthMiddleware(async (ctx) => {
+          const returned = ctx.context.returned as
+            | { url?: string }
+            | undefined
+            | null;
+          if (!returned || typeof returned !== "object") return;
+          if (typeof returned.url !== "string") return;
+          const origin = originFromAuthBaseURL(ctx.context.baseURL);
+          if (!origin) return;
+          const fixed = fixOAuthAuthorizeUrl(returned.url, origin);
+          if (fixed !== returned.url) {
+            returned.url = fixed;
+          }
+        }),
+      },
+    ],
+  },
+};
+
 const trustedSocialIds = SOCIAL_PROVIDERS.map((p) => p.providerId);
 
 export const auth = betterAuth({
@@ -216,8 +268,7 @@ export const auth = betterAuth({
   database,
   trustedOrigins,
 
-  // Direct Google / X on Vercel (and any host with env). Empty object when
-  // using Grok broker only — then genericOAuth supplies providers.
+  // Direct Google / X when env is set. Empty when using Grok broker only.
   socialProviders:
     backendMode === "direct_social" ? socialProviders : {},
 
@@ -236,6 +287,9 @@ export const auth = betterAuth({
 
   advanced: {
     useSecureCookies: false,
+    // Trust x-forwarded-host / proto so live-preview + CLI tunnels resolve
+    // absolute callback URLs (required for Grok broker redirect_uri).
+    trustedProxyHeaders: true,
     defaultCookieAttributes: { secure: true, sameSite: "lax", path: "/" },
     cookies: {
       session_token: { name: SESSION_TOKEN_COOKIE },
@@ -247,6 +301,7 @@ export const auth = betterAuth({
 
   plugins: [
     ...(grokOAuthPlugin ? [grokOAuthPlugin] : []),
+    absoluteOAuthRedirectPlugin,
     bearer(),
     tanstackStartCookies(),
   ],
