@@ -10,8 +10,8 @@ export const Route = createFileRoute("/links")({ component: LinksPage });
 
 const REPO = "https://github.com/ivelin/investment-portfolio-analysis";
 const PR = `${REPO}/pull/5`;
-const LINKS_MD = `${REPO}/blob/feature/multi-tenant-platform/LINKS.md`;
-const BRANCH = "feature/multi-tenant-platform";
+const LINKS_MD = `${REPO}/blob/main/web/LINKS.md`;
+const BRANCH = "main";
 
 function LinksPage() {
   return (
@@ -24,14 +24,13 @@ function LinksPage() {
           Project links
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-fg-muted">
-          Quick access to the repo and this app. Same list lives in GitHub as{" "}
-          <span className="font-medium text-fg">LINKS.md</span> on the feature
-          branch.
+          Quick access to the repo and this app. Hosting notes live in{" "}
+          <span className="font-medium text-fg">web/LINKS.md</span> on GitHub.
         </p>
 
         <Section title="Source">
           <Ext href={REPO} label="GitHub repository" />
-          <Ext href={PR} label="Pull request #5 (multi-tenant)" />
+          <Ext href={PR} label="Pull request #5 (merged multi-tenant)" />
           <Ext href={LINKS_MD} label="LINKS.md on GitHub" />
           <p className="text-xs text-fg-subtle">Branch: {BRANCH}</p>
         </Section>
@@ -46,11 +45,15 @@ function LinksPage() {
           <Int to="/security" label="Security" />
         </Section>
 
-        <Section title="Live preview">
+        <Section title="Hosting">
           <p className="text-sm text-fg-muted">
-            Open the <strong className="font-medium text-fg">live preview</strong>{" "}
-            panel in this Grok conversation (desktop: usually beside or below the
-            chat). That is the running app for this session.
+            <strong className="font-medium text-fg">Grok App</strong>{" "}
+            (<code className="text-xs">*.grok.me</code> publish is{" "}
+            <strong className="font-medium text-fg">not the live target</strong>{" "}
+            while CLI ↔ App Build handover is pending. Intended deploy is{" "}
+            <strong className="font-medium text-fg">Vercel + Neon</strong> (no
+            public URL until first deploy). Local:{" "}
+            <code className="text-xs">npm run dev</code> on port 8080.
           </p>
         </Section>
 

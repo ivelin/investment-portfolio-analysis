@@ -1,7 +1,7 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
-import { GROK_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
+import { SOCIAL_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { getAuthStatusFn } from "@/lib/auth/auth-status-queries";
 
@@ -102,7 +102,7 @@ function Login() {
             {isPending ? (
               <div className="h-10 animate-pulse rounded-[var(--radius-sm)] bg-bg-subtle" />
             ) : authEnabled ? (
-              GROK_PROVIDERS.map((p) => (
+              SOCIAL_PROVIDERS.map((p) => (
                 <button
                   key={p.providerId}
                   type="button"

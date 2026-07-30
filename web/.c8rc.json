@@ -8,6 +8,8 @@
     "src/lib/db-url.ts",
     "src/lib/runtime-env.ts",
     "src/lib/auth/auth-runtime-status.ts",
+    "src/lib/auth/social-config.ts",
+    "src/lib/auth/providers.ts",
     "src/routes/api/**/*.ts"
   ],
   "exclude": [
@@ -22,7 +24,6 @@
     "src/lib/auth/popup.server.ts",
     "src/lib/auth/use-current-user.ts",
     "src/lib/auth/email-password.ts",
-    "src/lib/auth/providers.ts",
     "src/lib/auth/preview.ts",
     "src/lib/auth/pglite-dialect.ts",
     "src/lib/auth/isolation.server.ts",

@@ -1,0 +1,182 @@
+# Preview + production deploys via Vercel CLI (works even before native Git
+# integration). Native "Vercel" GitHub checks appear after connecting the repo
+# in the Vercel dashboard (GitHub App → repository access).
+#
+# Required secrets (repo or org):
+#   VERCEL_TOKEN
+#   VERCEL_ORG_ID      (team id, e.g. team_…)
+#   VERCEL_PROJECT_ID  (prj_…)
+#
+# Neon: keep the Vercel Marketplace Neon store connected to this project with
+# "Preview" + "Resource must be active before deployment" so each preview gets
+# an isolated Neon branch + DATABASE_URL injection (see web/docs/CICD.md).
+
+name: Vercel Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/vercel-preview.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/vercel-preview.yml"
+
+concurrency:
+  group: vercel-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: vercel-deploy
+    runs-on: ubuntu-latest
+    # Permissions for deployment statuses (required-check friendly)
+    permissions:
+      contents: read
+      deployments: write
+      statuses: write
+      pull-requests: write
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Vercel CLI
+        # Deploy API requires a recent CLI (message mentioned >= 47.2.2)
+        run: npm install -g vercel@latest
+
+      - name: Require secrets
+        run: |
+          missing=0
+          for k in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
+            if [ -z "${!k}" ]; then
+              echo "::error::Missing secret $k — add it under repo Settings → Secrets"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Pull Vercel project settings
+        run: |
+          ENV_NAME=preview
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            ENV_NAME=production
+          fi
+          echo "ENV_NAME=$ENV_NAME" >> "$GITHUB_ENV"
+          vercel pull --yes --environment="$ENV_NAME" --token="$VERCEL_TOKEN"
+
+      - name: Build
+        run: vercel build $([ "$ENV_NAME" = "production" ] && echo --prod) --token="$VERCEL_TOKEN"
+
+      - name: Deploy
+        id: deploy
+        run: |
+          set -euo pipefail
+          if [ "$ENV_NAME" = "production" ]; then
+            URL=$(vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN")
+          else
+            URL=$(vercel deploy --prebuilt --token="$VERCEL_TOKEN")
+          fi
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "### Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Environment:** $ENV_NAME" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **URL:** $URL" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Health check (auth + Neon path)
+        id: health
+        env:
+          # Optional: Project Settings → Deployment Protection → Protection Bypass for Automation
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          URL="${{ steps.deploy.outputs.url }}"
+          CURL_HEADERS=()
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            CURL_HEADERS+=(
+              -H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"
+              -H "x-vercel-set-bypass-cookie: true"
+            )
+          fi
+          # Wait for READY (or settle on a final non-000 code)
+          code=000
+          for i in $(seq 1 30); do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' \
+              --max-time 15 "${CURL_HEADERS[@]}" "$URL/api/v1/health/auth" || echo 000)
+            if [ "$code" = "200" ]; then
+              break
+            fi
+            # Deployment Protection SSO is not transient — stop early
+            if [ "$code" = "302" ] || [ "$code" = "401" ]; then
+              break
+            fi
+            sleep 5
+          done
+          echo "HTTP $code"
+          cat /tmp/health.json || true
+
+          if [ "$code" = "302" ] || [ "$code" = "401" ]; then
+            echo "::warning::Deployment Protection blocked anonymous health (HTTP $code). Deploy already succeeded. Add secret VERCEL_AUTOMATION_BYPASS_SECRET (Vercel → Deployment Protection → Protection Bypass for Automation) for full health + Neon checks."
+            echo "database=protected" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          test "$code" = "200"
+          # Fail closed if production-like deploy has no DB (pglite on serverless is broken)
+          db=$(python3 -c "import json;print(json.load(open('/tmp/health.json')).get('database',''))")
+          echo "database=$db"
+          # Preview with Neon branching should report neon; local pglite only fails here
+          # if Vercel injects DATABASE_URL (Marketplace). Require neon when env has DATABASE_URL.
+          if grep -q '^DATABASE_URL=' .vercel/.env.preview 2>/dev/null \
+            || grep -q '^DATABASE_URL=' .vercel/.env.production 2>/dev/null \
+            || [ -n "${DATABASE_URL:-}" ]; then
+            test "$db" = "neon"
+          fi
+          echo "database=$db" >> "$GITHUB_OUTPUT"
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const url = '${{ steps.deploy.outputs.url }}';
+            const db = '${{ steps.health.outputs.database }}';
+            const body = [
+              '### Vercel preview',
+              '',
+              `- **URL:** ${url}`,
+              `- **Health database:** \`${db || 'unknown'}\``,
+              `- **Health:** ${url}/api/v1/health/auth`,
+              '',
+              'Isolated Neon branch is expected when Marketplace Preview Branching is enabled on the Neon store.',
+            ].join('\n');
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const prev = comments.find(c => c.user?.type === 'Bot' && c.body?.includes('### Vercel preview'));
+            if (prev) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: prev.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
