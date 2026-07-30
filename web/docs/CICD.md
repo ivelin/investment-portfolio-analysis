@@ -1,5 +1,9 @@
 # CI/CD: GitHub → Vercel preview + Neon branch
 
+Active development branch is **`main`**. The historical
+`feature/multi-tenant-platform` branch is fully superseded (multi-tenant code via
+PR #5; Vercel/social auth via PR #6; ops handoff notes reconciled on `main`).
+
 Yes — **preview deploys per PR with a matching Neon branch** belong in the
 default multi-tenant loop:
 
