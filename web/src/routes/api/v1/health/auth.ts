@@ -19,13 +19,15 @@ export async function healthAuthGet({
     request.headers.get("host") ||
     null;
   const status = getAuthRuntimeStatus(host);
+  const note = status.publishLikelyBroken
+    ? "Published host misconfigured. Vercel: set GOOGLE_*/TWITTER_* + DATABASE_URL + BETTER_AUTH_SECRET (see AUTH.md). Grok.me: needs platform DATABASE_URL (not fixable from public git)."
+    : status.hint;
   return Response.json(
     {
       ok: !status.publishLikelyBroken,
       ...status,
       trustedProxyHeaders: true,
-      note:
-        "If publishLikelyBroken, platform must inject GROK_AUTH_* + DATABASE_URL + BETTER_AUTH_SECRET. Host allowlist includes *.grok.me with trustedProxyHeaders.",
+      note,
     },
     {
       headers: { "cache-control": "no-store" },

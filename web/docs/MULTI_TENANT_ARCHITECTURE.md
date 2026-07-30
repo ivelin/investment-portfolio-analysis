@@ -1,16 +1,17 @@
 # Multi-tenant platform architecture
 
-**Branch:** `feature/multi-tenant-platform`  
+**Branch:** `main`  
 **Goal:** Hosted multi-tenant portfolio app (web + API + MCP + auth + Neon)
 without ever committing personal financial data to this public repository.
 
 This repository contains **only** the multi-tenant stack under `web/`.
+Auth product path: Better Auth **Google + X** social on Vercel (see [AUTH.md](./AUTH.md)).
 
 ## Components
 
 ```text
 Browser
-  └─ Session (Better Auth / platform broker)
+  └─ Session (Better Auth social: Google + X on Vercel)
        ├─ Dashboard (server fns, tenant-scoped SQL)
        ├─ REST  /api/v1/portfolio/*
        └─ MCP   /api/v1/mcp   (JSON tools, same auth)
@@ -95,7 +96,7 @@ See [BROKER_OAUTH.md](./BROKER_OAUTH.md).
 
 ## SRE / CI
 
-- **Green CI required** before merge: `web` typecheck + suite on `feature/**` and PRs.
+- **Green CI required** before merge: `web` typecheck + suite and `vercel-deploy` on PRs to `main`.
 - Local: `make ci` (also enforced by pre-push hook).
 - Fail closed on auth, tenant membership, and missing OAuth state.
 - No secrets in git, fixtures, logs, or public API responses.

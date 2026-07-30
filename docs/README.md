@@ -9,6 +9,7 @@ Multi-tenant hosted portfolio platform. All application code is under [`web/`](.
 | [MULTI_TENANT_ARCHITECTURE.md](MULTI_TENANT_ARCHITECTURE.md) | Tenants, Neon, REST, MCP, phases |
 | [MULTI_TENANT_SECURITY.md](MULTI_TENANT_SECURITY.md) | Isolation and public-repo rules |
 | [BROKER_OAUTH.md](BROKER_OAUTH.md) | Per-tenant broker OAuth |
+| [../web/docs/AUTH.md](../web/docs/AUTH.md) | Google + X social auth (no email/password) |
 | [../web/docs/COVERAGE.md](../web/docs/COVERAGE.md) | ≥80% critical-path coverage gate |
 | [../web/docs/CICD.md](../web/docs/CICD.md) | GitHub → Vercel preview + Neon branching |
 
