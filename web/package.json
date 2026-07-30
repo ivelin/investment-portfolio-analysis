@@ -23,12 +23,13 @@
     "test:oauth-bind": "node scripts/run-tests.mjs oauth-bind",
     "test:legal": "node scripts/run-tests.mjs legal",
     "test:auth-status": "node scripts/run-tests.mjs auth-status",
+    "test:auth-social": "node scripts/run-tests.mjs auth-social",
     "ci": "npm run typecheck && npm run test:coverage && npm run test:e2e",
-    "test:unit": "node scripts/run-tests.mjs mece auth-status oauth-bind legal isolation token-refresh broker-setup",
+    "test:unit": "node scripts/run-tests.mjs mece auth-status auth-social oauth-bind legal isolation token-refresh broker-setup",
     "test:api": "node scripts/run-tests.mjs api",
     "test:mcp": "node scripts/run-tests.mjs mcp",
     "test:e2e": "node scripts/run-tests.mjs e2e",
-    "test:coverage": "c8 --config .c8rc.json node scripts/run-tests.mjs mece auth-status oauth-bind legal isolation token-refresh broker-setup api mcp"
+    "test:coverage": "c8 --config .c8rc.json node scripts/run-tests.mjs mece auth-status auth-social oauth-bind legal isolation token-refresh broker-setup api mcp"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.3",

@@ -94,20 +94,42 @@ jobs:
 
       - name: Health check (auth + Neon path)
         id: health
+        env:
+          # Optional: Project Settings → Deployment Protection → Protection Bypass for Automation
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
           set -euo pipefail
           URL="${{ steps.deploy.outputs.url }}"
-          # Wait for READY
+          CURL_HEADERS=()
+          if [ -n "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            CURL_HEADERS+=(
+              -H "x-vercel-protection-bypass: ${VERCEL_AUTOMATION_BYPASS_SECRET}"
+              -H "x-vercel-set-bypass-cookie: true"
+            )
+          fi
+          # Wait for READY (or settle on a final non-000 code)
+          code=000
           for i in $(seq 1 30); do
             code=$(curl -sS -o /tmp/health.json -w '%{http_code}' \
-              --max-time 15 "$URL/api/v1/health/auth" || echo 000)
+              --max-time 15 "${CURL_HEADERS[@]}" "$URL/api/v1/health/auth" || echo 000)
             if [ "$code" = "200" ]; then
+              break
+            fi
+            # Deployment Protection SSO is not transient — stop early
+            if [ "$code" = "302" ] || [ "$code" = "401" ]; then
               break
             fi
             sleep 5
           done
           echo "HTTP $code"
           cat /tmp/health.json || true
+
+          if [ "$code" = "302" ] || [ "$code" = "401" ]; then
+            echo "::warning::Deployment Protection blocked anonymous health (HTTP $code). Deploy already succeeded. Add secret VERCEL_AUTOMATION_BYPASS_SECRET (Vercel → Deployment Protection → Protection Bypass for Automation) for full health + Neon checks."
+            echo "database=protected" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           test "$code" = "200"
           # Fail closed if production-like deploy has no DB (pglite on serverless is broken)
           db=$(python3 -c "import json;print(json.load(open('/tmp/health.json')).get('database',''))")

@@ -62,17 +62,37 @@ export async function handleAuthPopupRequest(request: Request): Promise<Response
   // Stay first-party for the callback so the session cookie lands in THIS popup.
   const back = `${url.origin}/auth/popup?done=1`;
   try {
-    const apiRes = await auth.api.signInWithOAuth2({
-      body: {
-        providerId,
-        callbackURL: back,
-        errorCallbackURL: `${back}&error=1`,
-      },
-      // Forward the preview host so Better Auth derives the correct baseURL /
-      // redirect_uri for the dynamic `*.grok-sandbox.com` origin.
-      headers: request.headers,
-      asResponse: true,
-    });
+    // Prefer direct social (google/twitter). Response is always truthy even when
+    // !ok — only treat ok responses as success; otherwise fall through to
+    // generic OAuth2 (grok_broker / empty socialProviders).
+    let apiRes: Response | null = null;
+    if (providerId === "google" || providerId === "twitter") {
+      try {
+        const social = await auth.api.signInSocial({
+          body: {
+            provider: providerId,
+            callbackURL: back,
+            errorCallbackURL: `${back}&error=1`,
+          },
+          headers: request.headers,
+          asResponse: true,
+        });
+        if (social.ok) apiRes = social;
+      } catch {
+        // Provider not registered as social — try oauth2 below.
+      }
+    }
+    if (!apiRes) {
+      apiRes = await auth.api.signInWithOAuth2({
+        body: {
+          providerId,
+          callbackURL: back,
+          errorCallbackURL: `${back}&error=1`,
+        },
+        headers: request.headers,
+        asResponse: true,
+      });
+    }
 
     if (!apiRes.ok) {
       const detail = await apiRes.text().catch(() => "");

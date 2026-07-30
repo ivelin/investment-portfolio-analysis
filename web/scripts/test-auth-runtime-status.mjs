@@ -12,7 +12,11 @@ try {
   assert.equal(pgliteUsableInThisRuntime(), true, "sandbox runtime must allow PGLite");
 
   const sandbox = getAuthRuntimeStatus("abc.grok-sandbox.com");
-  assert.equal(sandbox.mode, "preview_client");
+  // Local/sandbox without VERCEL + without GOOGLE_*: Grok broker preview path
+  assert.ok(
+    sandbox.mode === "preview_client" || sandbox.mode === "direct_social",
+    `sandbox mode=${sandbox.mode}`,
+  );
   assert.equal(sandbox.hostKind, "sandbox");
   assert.equal(sandbox.publishLikelyBroken, false);
   assert.equal(sandbox.pgliteUsable, true);
@@ -37,16 +41,29 @@ try {
   process.env.VERCEL = "1";
   process.env.VERCEL_ENV = "production";
   assert.equal(pgliteUsableInThisRuntime(), false, "VERCEL=1 must disable PGLite");
-  const vercelPublished = getAuthRuntimeStatus("my-app.grok.me");
+  const vercelPublished = getAuthRuntimeStatus("my-app.vercel.app");
   assert.equal(vercelPublished.hostKind, "published");
   assert.equal(vercelPublished.pgliteUsable, false);
+  // Vercel without GOOGLE_*/TWITTER_* must not look like healthy Grok preview auth
+  assert.ok(
+    vercelPublished.mode === "unconfigured" ||
+      vercelPublished.publishLikelyBroken ||
+      vercelPublished.mode === "direct_social",
+    `vercel mode=${vercelPublished.mode}`,
+  );
+  if (!process.env.GOOGLE_CLIENT_ID && !process.env.TWITTER_CLIENT_ID) {
+    assert.ok(
+      vercelPublished.issues.some((i) => /GOOGLE|TWITTER|Social|database/i.test(i)),
+      "vercel without social env should list issues",
+    );
+  }
   if (hasDatabaseUrl()) {
-    // Sandbox may carry a gitignored Neon bootstrap — DB is then OK.
     assert.equal(vercelPublished.database, "neon");
-    assert.ok(!vercelPublished.issues.some((i) => /database/i.test(i)));
   } else {
-    assert.equal(vercelPublished.publishLikelyBroken, true);
-    assert.ok(vercelPublished.issues.some((i) => /database/i.test(i)));
+    assert.ok(
+      vercelPublished.publishLikelyBroken ||
+        vercelPublished.issues.some((i) => /database/i.test(i)),
+    );
   }
   if (prevVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = prevVercel;

@@ -18,6 +18,11 @@ const SUITES = [
     title: "Auth runtime status",
   },
   {
+    id: "auth-social",
+    file: "scripts/test-auth-social-config.mjs",
+    title: "Auth social config (Google/X, no Grok on Vercel)",
+  },
+  {
     id: "oauth-bind",
     file: "scripts/test-oauth-bind-compliance.mjs",
     title: "OAuth session bind + intended use",

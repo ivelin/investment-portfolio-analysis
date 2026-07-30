@@ -36,6 +36,7 @@ Repo → **Settings → Secrets and variables → Actions**:
 | `VERCEL_TOKEN` | Vercel account token (Settings → Tokens) |
 | `VERCEL_ORG_ID` | `team_vhRLfXjbtB0CgVM29W6ErXus` (from `.vercel/project.json` `orgId`) |
 | `VERCEL_PROJECT_ID` | `prj_8XrN8JPmq2fyp4mP3IxA42DP4hWN` |
+| `VERCEL_AUTOMATION_BYPASS_SECRET` | **Optional.** Vercel → Project → Deployment Protection → Protection Bypass for Automation. Without it, health may get HTTP 302 and the job still passes (deploy already succeeded). |
 
 ### 2. Grant Vercel GitHub App access to this repo
 
@@ -66,17 +67,26 @@ deployment-scoped `DATABASE_URL` (not visible as a static preview env var).
 
 Build already runs migrations: `npm run build` → `vite build && npm run db:migrate`.
 
-### 4. Auth env
+### 4. Auth env (Google + X social — no email/password)
+
+See [AUTH.md](./AUTH.md).
 
 | Env | Preview | Production |
 |-----|---------|------------|
 | `DATABASE_URL` | Neon integration / branch inject | Neon production |
 | `BETTER_AUTH_SECRET` | set | set |
-| `BETTER_AUTH_URL` | **omit** (app uses `VERCEL_URL` + `*.vercel.app` allowlist) | optional fixed prod URL |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | set | set |
+| `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` | set | set |
+| `BETTER_AUTH_URL` | **omit** (uses `VERCEL_URL`) | optional fixed prod URL |
 | `VITE_AUTH_ENABLED` | `true` | `true` |
-| `GROK_AUTH_*` | only if using Grok broker on that host | optional |
+| `GROK_AUTH_*` | **do not use on Vercel** | n/a |
 
-Do **not** pin `BETTER_AUTH_URL` to a stale hostname.
+OAuth app callbacks:
+
+```text
+https://<host>/api/auth/callback/google
+https://<host>/api/auth/callback/twitter
+```
 
 ### 5. Required status checks (branch protection)
 
