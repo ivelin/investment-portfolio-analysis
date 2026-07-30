@@ -11,7 +11,7 @@ discipline, and incomplete truth over comforting fiction.
 | Capability | Description |
 |------------|-------------|
 | **Workspaces** | Personal tenant isolation — your data never mixes with another user’s |
-| **Auth** | Better Auth + federated sign-in (Google / X via platform broker) |
+| **Auth** | Better Auth social sign-in (Google + X); email/password off |
 | **Dashboard** | Demo/synthetic funds first; real broker data via connectors |
 | **API + MCP** | Same domain service as the UI — session or tenant API key |
 | **Honest data** | No fabricated daily history; gaps are shown as incomplete |
@@ -52,6 +52,8 @@ make install-hooks   # pre-push runs make ci
 | [docs/MULTI_TENANT_ARCHITECTURE.md](docs/MULTI_TENANT_ARCHITECTURE.md) | Tenants, API, MCP, Neon |
 | [docs/MULTI_TENANT_SECURITY.md](docs/MULTI_TENANT_SECURITY.md) | Isolation + public-repo hard rules |
 | [docs/BROKER_OAUTH.md](docs/BROKER_OAUTH.md) | Per-tenant broker OAuth |
+| [web/docs/AUTH.md](web/docs/AUTH.md) | Google + X social auth (no email/password) |
+| [web/docs/CICD.md](web/docs/CICD.md) | GitHub → Vercel + Neon previews |
 | [SECURITY.md](SECURITY.md) | Secrets, redaction, no PII in git |
 | [HANDOFF.md](HANDOFF.md) | Deploy / agent handoff |
 
@@ -64,7 +66,8 @@ make install-hooks   # pre-push runs make ci
 
 ## Status
 
-Branch [`feature/multi-tenant-platform`](https://github.com/ivelin/investment-portfolio-analysis/tree/feature/multi-tenant-platform) · [PR #5](https://github.com/ivelin/investment-portfolio-analysis/pull/5).
+Default branch: **[`main`](https://github.com/ivelin/investment-portfolio-analysis/tree/main)**  
+(multi-tenant platform, Vercel/Neon CI, Google/X social auth — feature branch fully merged and deleted).
 
 ## License
 

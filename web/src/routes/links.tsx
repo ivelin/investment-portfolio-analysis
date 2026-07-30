@@ -9,8 +9,9 @@ import { AppShell } from "@/components/layout/app-shell";
 export const Route = createFileRoute("/links")({ component: LinksPage });
 
 const REPO = "https://github.com/ivelin/investment-portfolio-analysis";
-const PR = `${REPO}/pull/5`;
+const MAIN = `${REPO}/tree/main`;
 const LINKS_MD = `${REPO}/blob/main/web/LINKS.md`;
+const AUTH_MD = `${REPO}/blob/main/web/docs/AUTH.md`;
 const BRANCH = "main";
 
 function LinksPage() {
@@ -30,8 +31,9 @@ function LinksPage() {
 
         <Section title="Source">
           <Ext href={REPO} label="GitHub repository" />
-          <Ext href={PR} label="Pull request #5 (merged multi-tenant)" />
+          <Ext href={MAIN} label="Default branch: main" />
           <Ext href={LINKS_MD} label="LINKS.md on GitHub" />
+          <Ext href={AUTH_MD} label="AUTH.md (Google + X social)" />
           <p className="text-xs text-fg-subtle">Branch: {BRANCH}</p>
         </Section>
 
@@ -47,13 +49,12 @@ function LinksPage() {
 
         <Section title="Hosting">
           <p className="text-sm text-fg-muted">
-            <strong className="font-medium text-fg">Grok App</strong>{" "}
-            (<code className="text-xs">*.grok.me</code> publish is{" "}
-            <strong className="font-medium text-fg">not the live target</strong>{" "}
-            while CLI ↔ App Build handover is pending. Intended deploy is{" "}
-            <strong className="font-medium text-fg">Vercel + Neon</strong> (no
-            public URL until first deploy). Local:{" "}
-            <code className="text-xs">npm run dev</code> on port 8080.
+            <strong className="font-medium text-fg">Vercel + Neon</strong> is
+            the production path (Google + X social auth).{" "}
+            <code className="text-xs">*.grok.me</code> publish is{" "}
+            <strong className="font-medium text-fg">not</strong> the live target
+            (missing platform <code className="text-xs">DATABASE_URL</code>).
+            Local: <code className="text-xs">npm run dev</code> on port 8080.
           </p>
         </Section>
 

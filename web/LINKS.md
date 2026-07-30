@@ -20,10 +20,10 @@ Easy reference links for this multi-tenant portfolio analysis work.
 
 | Environment | Why login works / fails |
 |-------------|-------------------------|
-| **Local** (`localhost:8080`) | PGLite + preview auth client (or local env) |
-| **Grok sandbox preview** (`*.grok-sandbox.com`) | Shared sandbox OAuth client + PGLite (when using App Build sandbox) |
-| **Grok published** (`*.grok.me`) | Needs platform-injected `GROK_AUTH_*`, `BETTER_AUTH_*`, `DATABASE_URL` — **handover not available yet** |
-| **Vercel** | Needs project env (`DATABASE_URL` Neon, `BETTER_AUTH_*`, etc.) after first deploy |
+| **Local** (`localhost:8080`) | PGLite; optional Grok broker only if no social env |
+| **Grok sandbox preview** (`*.grok-sandbox.com`) | Legacy Grok broker path + PGLite (not the Vercel product path) |
+| **Grok published** (`*.grok.me`) | Broken without platform `DATABASE_URL` — **not** the prod target |
+| **Vercel** | **Prod path:** Neon `DATABASE_URL` + `BETTER_AUTH_SECRET` + `GOOGLE_*` / `TWITTER_*` (see [AUTH.md](docs/AUTH.md)) |
 
 Health (any host): `GET /api/v1/health/auth` — want `database: "neon"` on real deploys.
 
@@ -32,7 +32,7 @@ Health (any host): `GET /api/v1/health/auth` — want `database: "neon"` on real
 | What | Link |
 |------|------|
 | **GitHub repo** | [ivelin/investment-portfolio-analysis](https://github.com/ivelin/investment-portfolio-analysis) |
-| **Default branch** | `main` (multi-tenant stack merged via PR #5) |
+| **Default branch** | [`main`](https://github.com/ivelin/investment-portfolio-analysis/tree/main) |
 | **Coverage policy** | [docs/COVERAGE.md](docs/COVERAGE.md) |
 
 ## Product pages
