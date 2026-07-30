@@ -1,9 +1,9 @@
-# Authentication (Vercel + multi-tenant)
+# Authentication
 
-## Product path: Google + X only (no email/password)
+## Product path: Google + X on Vercel (no email/password)
 
 Self-hosted **Better Auth** on this app’s origin (`/api/auth/*`) with built-in
-**socialProviders**:
+**socialProviders** when `GOOGLE_*` / `TWITTER_*` are set.
 
 | Provider | Better Auth id | Env vars |
 |----------|----------------|----------|
@@ -21,13 +21,12 @@ https://<your-deployment-host>/api/auth/callback/twitter
 
 Examples:
 
-- Production: `https://investment-portfolio-analysis.vercel.app/api/auth/callback/google`
-- Preview: each `*.vercel.app` host (or a stable preview domain if the provider
-  allows only fixed URLs)
+- Production alias: `https://investment-portfolio-analysis-ivelins-projects-9f9b7132.vercel.app/api/auth/callback/twitter`
+- Preview: each `*.vercel.app` host (or a stable preview domain if the provider allows only fixed URLs)
 
 Also set **Authorized JavaScript origins** for the app origin(s).
 
-### Other env (already used)
+### Other env
 
 | Variable | Purpose |
 |----------|---------|
@@ -38,25 +37,59 @@ Also set **Authorized JavaScript origins** for the app origin(s).
 
 Do **not** set Grok broker secrets for Vercel. Do **not** commit OAuth secrets.
 
-## Backend selection (shipped)
-
-See `src/lib/auth/social-config.ts`:
+## Backend selection (`social-config.ts`)
 
 | Condition | Mode |
 |-----------|------|
 | `VITE_AUTH_ENABLED=false` | disabled |
-| `GOOGLE_*` and/or `TWITTER_*` set | **direct_social** (product path) |
-| `VERCEL=1` without social env | **unconfigured** (fail closed — never Grok) |
-| Non-Vercel without social env | **grok_broker** (legacy local / Grok sandbox only) |
+| `GOOGLE_*` / `TWITTER_*` present | **direct_social** |
+| `VERCEL=1` without social env | **unconfigured** (never silent Grok) |
+| `AUTH_DISABLE_GROK_BROKER=true` | **unconfigured** |
+| Else (Grok sandbox / CLI / local) | **grok_broker** |
 
-Vercel hosts **never** fall through to `auth.grok.me` / `grok_preview`.
+| Backend | How |
+|---------|-----|
+| **direct_social** | Better Auth `socialProviders` → Google / X on this origin |
+| **grok_broker** | Better Auth `genericOAuth` → `auth.grok.me` (sandbox/CLI only) |
+| **unconfigured** | Fail closed — login UI explains missing config |
 
-## Grok broker (legacy)
+## Grok broker (sandbox / CLI only — not product)
 
-Only for non-Vercel Grok sandbox / local when direct social env is absent.
-Not the production Vercel path.
+Uses shared preview client (`grok_preview`) unless the platform injects
+`GROK_AUTH_CLIENT_ID` / `GROK_AUTH_CLIENT_SECRET` (published `*.grok.me`).
+
+Broker-allowed callback (preview client):
+
+```text
+https://*.grok-sandbox.com/api/auth/oauth2/callback/*
+```
+
+**Critical:** `redirect_uri` must be **absolute**. A relative
+`/oauth2/callback/twitter` produces `Invalid redirect URI` on
+`auth.grok.me`. This app:
+
+1. Resolves dynamic `baseURL` from `Host` / `x-forwarded-host` (trusted proxy headers on)
+2. Rewrites authorize URLs so `redirect_uri` is absolute (`oauth-redirect.ts` + server hook + popup + client)
+
+Live preview opens OAuth in a **popup** (`/auth/popup`) so first-party cookies work inside the iframe.
+
+### Grok App Publish — deferred
+
+`*.grok.me` publish remains non-product: no platform `DATABASE_URL`, and Grok
+Build CLI cannot configure grok.me auth for this app. **Revisit mid–late
+August 2026** (see root [HANDOFF.md](../../HANDOFF.md)). Until then operate on
+Vercel + Neon + direct social only.
 
 ## Health
 
-`GET /api/v1/health/auth` reports `mode: "direct_social" | "unconfigured" | …`
-without secrets.
+`GET /api/v1/health/auth`
+
+| Environment | Expect |
+|-------------|--------|
+| Grok sandbox / CLI (no social env) | `mode: "preview_client"`, `database: "pglite"` |
+| Vercel + social + Neon | `mode: "direct_social"`, `database: "neon"`, `publishLikelyBroken: false` |
+| Vercel without social | `mode: "unconfigured"`, issues list social env |
+
+## Opt-out
+
+`AUTH_DISABLE_GROK_BROKER=true` — disable broker fallback on non-Vercel hosts.

@@ -4,6 +4,7 @@ import { AppShell } from "@/components/layout/app-shell";
 import { SOCIAL_PROVIDERS, authEnabled, signIn } from "@/lib/auth/client";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import { getAuthStatusFn } from "@/lib/auth/auth-status-queries";
+import type { AuthRuntimeStatus } from "@/lib/auth/auth-runtime-status";
 
 export const Route = createFileRoute("/login")({ component: Login });
 
@@ -11,12 +12,7 @@ function Login() {
   const { user, isPending } = useCurrentUserState();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  /**
-   * True only when this process is real serverless published without a durable
-   * DB. Live preview may forward a *.grok.me Host header but still runs PGLite
-   * successfully — that must NOT show the broken banner.
-   */
-  const [publishStoragePending, setPublishStoragePending] = useState(false);
+  const [status, setStatus] = useState<AuthRuntimeStatus | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -30,11 +26,10 @@ function Login() {
     getAuthStatusFn()
       .then((s) => {
         if (cancelled) return;
-        // Fail closed only when runtime cannot use PGLite AND publish is broken.
-        setPublishStoragePending(Boolean(s.publishLikelyBroken));
+        setStatus(s);
       })
       .catch(() => {
-        /* keep buttons usable */
+        /* keep buttons usable when status fails */
       });
     return () => {
       cancelled = true;
@@ -45,6 +40,15 @@ function Login() {
     return <Navigate to="/dashboard" />;
   }
 
+  const canSignIn =
+    status == null ||
+    status.authEnabled ||
+    status.mode === "direct_social" ||
+    status.mode === "preview_client" ||
+    status.mode === "deployed_client";
+  const publishStoragePending = Boolean(status?.publishLikelyBroken);
+  const unconfigured = status?.mode === "unconfigured";
+
   async function onSignIn(providerId: string) {
     setBusy(providerId);
     setError(null);
@@ -54,11 +58,12 @@ function Login() {
         errorCallbackURL: "/login?error=signin",
       });
     } catch {
-      // Plain language only — no env dumps on the login screen.
       setError(
         publishStoragePending
-          ? "This published link can’t save accounts yet. Use the live preview in chat to sign in, or republish after storage is attached."
-          : "Sign-in didn’t work. Please try again (allow pop-ups if prompted).",
+          ? "This published link can’t save accounts yet. Use the live preview to sign in, or attach Postgres (Neon) on the host."
+          : unconfigured
+            ? "Sign-in isn’t configured on this host yet."
+            : "Sign-in didn’t work. Please try again (allow pop-ups if prompted).",
       );
     } finally {
       setBusy(null);
@@ -85,9 +90,18 @@ function Login() {
             <div className="mt-4 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm leading-relaxed text-fg-muted">
               <p className="font-medium text-fg">Published sign-in not ready yet</p>
               <p className="mt-1">
-                Providers are configured, but this serverless host has no durable
-                account database yet. Sign-in can’t persist sessions until storage
-                is attached on publish.
+                This serverless host needs durable Postgres (Neon) before sessions
+                can be saved. Live preview still works with local storage.
+              </p>
+            </div>
+          ) : null}
+
+          {unconfigured && !publishStoragePending ? (
+            <div className="mt-4 rounded-[var(--radius-md)] border border-amber-500/30 bg-amber-500/10 px-3 py-3 text-sm leading-relaxed text-fg-muted">
+              <p className="font-medium text-fg">Social sign-in not configured</p>
+              <p className="mt-1">
+                On Vercel set Google/X OAuth credentials. In the Grok sandbox,
+                the shared broker should enable sign-in automatically.
               </p>
             </div>
           ) : null}
@@ -99,9 +113,9 @@ function Login() {
           ) : null}
 
           <div className="mt-6 space-y-3">
-            {isPending ? (
+            {isPending && status == null ? (
               <div className="h-10 animate-pulse rounded-[var(--radius-sm)] bg-bg-subtle" />
-            ) : authEnabled ? (
+            ) : authEnabled && canSignIn && !unconfigured ? (
               SOCIAL_PROVIDERS.map((p) => (
                 <button
                   key={p.providerId}
@@ -116,7 +130,11 @@ function Login() {
                 </button>
               ))
             ) : (
-              <p className="text-sm text-fg-muted">Sign-in is disabled.</p>
+              <p className="text-sm text-fg-muted">
+                {unconfigured
+                  ? "Sign-in buttons appear once auth is configured on this host."
+                  : "Sign-in is disabled."}
+              </p>
             )}
           </div>
 
