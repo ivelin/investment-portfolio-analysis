@@ -1,11 +1,14 @@
 import { getSql } from "@/lib/db";
 import { newId } from "@/lib/security/ids";
 import {
+  isSimulatedAccountRow,
   pickPrimaryAccount,
+  resolveDashboardDataMode,
   workspaceIsDemoOnly,
 } from "./dashboard-selection";
 import type {
   AccountSummary,
+  DashboardDataMode,
   DashboardPayload,
   FundSeriesPoint,
   PositionRow,
@@ -116,6 +119,7 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
     broker: string;
     display_name: string;
     account_mask: string;
+    account_key: string;
     fund_symbol: string;
     is_demo: boolean;
     currency: string;
@@ -127,6 +131,7 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
       a.broker,
       a.display_name,
       a.account_mask,
+      a.account_key,
       a.fund_symbol,
       a.is_demo,
       a.currency,
@@ -166,10 +171,24 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
     accountMask: r.account_mask,
     fundSymbol: r.fund_symbol,
     isDemo: Boolean(r.is_demo),
+    isSimulated: isSimulatedAccountRow({
+      accountKey: r.account_key,
+      displayName: r.display_name,
+    }),
     currency: r.currency,
     latestNlv: r.latest_nlv == null ? null : Number(r.latest_nlv),
     latestAsOf: r.latest_as_of,
   }));
+}
+
+async function listConnectorModes(tenantId: string): Promise<string[]> {
+  const sql = await getSql();
+  const rows = await sql<{ mode: string }>`
+    select mode from connectors
+    where tenant_id = ${tenantId}
+      and status in (${"connected"}, ${"error"}, ${"pending_oauth"})
+  `;
+  return rows.map((r) => r.mode).filter(Boolean);
 }
 
 export async function getPositions(
@@ -270,22 +289,33 @@ export async function getConnectorStatuses(tenantId: string) {
   return listConnectors(tenantId);
 }
 
+function computeDataMode(
+  accounts: AccountSummary[],
+  connectorModes: string[],
+): DashboardDataMode {
+  return resolveDashboardDataMode({ accounts, connectorModes });
+}
+
 export async function getWorkspaceSummary(
   tenantId: string,
   tenant: { id: string; name: string; slug: string; plan: string },
   primaryAccountId?: string | null,
 ): Promise<WorkspaceSummary> {
   const accounts = await listAccounts(tenantId);
-  const live = accounts.filter((a) => !a.isDemo);
+  const modes = await listConnectorModes(tenantId);
+  const dataMode = computeDataMode(accounts, modes);
+  const live = accounts.filter((a) => !a.isDemo && !a.isSimulated);
+  const anyLive = accounts.filter((a) => !a.isDemo);
   const primary = pickPrimaryAccount(accounts, primaryAccountId);
   let twrrPeriodReturnPct: number | null = null;
   if (primary) {
     const series = await getFundSeries(tenantId, primary.id);
     twrrPeriodReturnPct = periodReturnPct(series);
   }
+  const sumPool = live.length > 0 ? live : anyLive;
   const latestNlv =
-    live.length > 0
-      ? live.reduce((s, a) => s + (a.latestNlv ?? 0), 0)
+    sumPool.length > 0
+      ? sumPool.reduce((s, a) => s + (a.latestNlv ?? 0), 0)
       : (primary?.latestNlv ?? null);
   return {
     id: tenant.id,
@@ -297,6 +327,7 @@ export async function getWorkspaceSummary(
     twrrPeriodReturnPct,
     isDemo: workspaceIsDemoOnly(accounts),
     accountCount: accounts.length,
+    dataMode,
   };
 }
 
@@ -335,11 +366,14 @@ export async function getDashboardPayload(
   preferredAccountId?: string | null,
 ): Promise<DashboardPayload> {
   const accounts = await listAccounts(tenantId);
+  const modes = await listConnectorModes(tenantId);
+  const dataMode = computeDataMode(accounts, modes);
   // Prefer linked/live; never default chart/positions to sample when live exists.
   const primary = pickPrimaryAccount(accounts, preferredAccountId);
   const series = primary ? await getFundSeries(tenantId, primary.id) : [];
   const positions = primary ? await getPositions(tenantId, primary.id) : [];
   const workspace = await getWorkspaceSummary(tenantId, tenant, primary?.id);
+  workspace.dataMode = dataMode;
   if (primary) {
     workspace.twrrPeriodReturnPct = periodReturnPct(series);
     workspace.latestAsOf = primary.latestAsOf;
@@ -350,5 +384,6 @@ export async function getDashboardPayload(
     series,
     positions,
     selectedAccountId: primary?.id ?? null,
+    dataMode,
   };
 }
