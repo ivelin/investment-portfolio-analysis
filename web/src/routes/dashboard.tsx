@@ -22,6 +22,7 @@ import {
   visibleDashboardAccounts,
 } from "@/lib/portfolio/dashboard-selection";
 import type {
+  AccountSummary,
   DashboardDataMode,
   DashboardPayload,
   FundSeriesPoint,
@@ -37,6 +38,11 @@ function modeBadge(mode: DashboardDataMode): string {
   if (mode === "live") return "Live brokers";
   if (mode === "simulated") return "Simulated Schwab";
   return "Sample portfolio";
+}
+
+function accountLabel(a: AccountSummary): string {
+  const mask = a.accountMask ? ` ${a.accountMask}` : "";
+  return `${a.displayName}${mask}`;
 }
 
 function DashboardPage() {
@@ -161,10 +167,13 @@ function DashboardPage() {
     [data],
   );
 
+  const selectedSharePct = useMemo(() => {
+    if (!selected?.latestNlv || !(totalValueNlv > 0) || isSample) return null;
+    return (selected.latestNlv / totalValueNlv) * 100;
+  }, [selected, totalValueNlv, isSample]);
+
   const posSymbols = positions.map((p) => p.symbol);
-  // Only warn about demo holdings when we claim to be on live data.
-  const showingDemoHoldings =
-    isLive && positionsLookLikeDemo(posSymbols);
+  const showingDemoHoldings = isLive && positionsLookLikeDemo(posSymbols);
 
   async function loadSimulated() {
     setSeeding(true);
@@ -200,6 +209,8 @@ function DashboardPage() {
       : periodReturnPct >= 0
         ? "up"
         : "down";
+
+  const selectedTitle = selected ? accountLabel(selected) : "No account selected";
 
   return (
     <AppShell>
@@ -257,7 +268,6 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {/* Sample only: offer sim or real connect. Never show when live. */}
         {isSample ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-4 text-sm text-fg-muted sm:px-5">
             <p>
@@ -290,7 +300,6 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {/* Simulated only — never when live broker data is primary */}
         {isSimulated ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-3 text-sm text-fg-muted">
             Dashboard is on{" "}
@@ -305,7 +314,6 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {/* Live: quiet confirmation, no dummy/sim language */}
         {isLive ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-success/25 bg-success/5 px-4 py-3 text-sm text-fg-muted">
             Showing <strong className="text-fg">live broker</strong> balances and
@@ -329,37 +337,106 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        <div className="mt-8 grid gap-3 sm:grid-cols-3">
+        {/* Workspace total — sum across accounts, always distinct from selection */}
+        {!isSample && valueAccounts.length > 0 ? (
+          <section className="mt-8 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-fg-subtle">
+                  Workspace total
+                </p>
+                <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">
+                  {loading && !data ? "…" : formatUsd(totalValueNlv)}
+                </p>
+                <p className="mt-1 text-sm text-fg-muted">
+                  Sum of {valueAccounts.length} account
+                  {valueAccounts.length === 1 ? "" : "s"}
+                  {isLive ? " (live broker data)" : " (simulated)"}
+                </p>
+              </div>
+            </div>
+            <ul className="mt-5 divide-y divide-border border-t border-border">
+              {valueAccounts.map((a) => {
+                const active = a.id === selected?.id;
+                const share =
+                  a.latestNlv != null && totalValueNlv > 0
+                    ? (a.latestNlv / totalValueNlv) * 100
+                    : null;
+                return (
+                  <li key={a.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAccountId(a.id)}
+                      className={
+                        active
+                          ? "flex w-full items-center justify-between gap-3 bg-bg-subtle/80 px-1 py-3 text-left sm:px-2"
+                          : "flex w-full items-center justify-between gap-3 px-1 py-3 text-left transition-colors hover:bg-bg-subtle/50 sm:px-2"
+                      }
+                    >
+                      <div className="min-w-0">
+                        <p
+                          className={
+                            active
+                              ? "truncate text-sm font-semibold text-fg"
+                              : "truncate text-sm font-medium text-fg"
+                          }
+                        >
+                          {accountLabel(a)}
+                          {active ? (
+                            <span className="ml-2 text-xs font-medium text-primary">
+                              viewing
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="mt-0.5 text-xs text-fg-subtle">
+                          {a.broker}
+                          {share != null
+                            ? ` · ${share.toFixed(1)}% of total`
+                            : ""}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-fg">
+                        {formatUsd(a.latestNlv)}
+                      </p>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
           <StatCard
-            label={isSample ? "Net liquidation" : "Total value"}
+            label={isSample ? "Net liquidation" : "Workspace total"}
             value={
               loading && !data
                 ? "…"
                 : formatUsd(
-                    isSample
-                      ? (selected?.latestNlv ?? null)
-                      : totalValueNlv,
+                    isSample ? (selected?.latestNlv ?? null) : totalValueNlv,
                   )
             }
             hint={
-              isLive
-                ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
-                : isSimulated
-                  ? `${simAccounts.length} simulated account${simAccounts.length === 1 ? "" : "s"}`
-                  : selected?.latestAsOf
-                    ? `As of ${selected.latestAsOf}`
-                    : "Awaiting series"
+              isSample
+                ? selected?.latestAsOf
+                  ? `As of ${selected.latestAsOf}`
+                  : "Sample fund"
+                : `${valueAccounts.length} account${valueAccounts.length === 1 ? "" : "s"} combined`
             }
           />
           <StatCard
-            label="Selected account"
+            label="This account"
             value={
               loading && !data ? "…" : formatUsd(selected?.latestNlv ?? null)
             }
             hint={
               selected
-                ? `${selected.displayName}${selected.accountMask ? ` ${selected.accountMask}` : ""}`
-                : "Primary"
+                ? `${accountLabel(selected)}${
+                    selectedSharePct != null
+                      ? ` · ${selectedSharePct.toFixed(0)}% of total`
+                      : ""
+                  }`
+                : "Select an account below"
             }
           />
           <StatCard
@@ -370,43 +447,84 @@ function DashboardPage() {
             tone={tone as "default" | "up" | "down"}
             hint={
               series.length < 2
-                ? "Need at least two daily points (sync over time)"
-                : "From first to last available day on the selected account"
+                ? `For ${selectedTitle} — need ≥2 daily points`
+                : `For ${selectedTitle}`
             }
           />
         </div>
 
-        {visibleAccounts.length > 1 ? (
-          <div className="mt-6 flex flex-wrap gap-2">
-            {visibleAccounts.map((a) => {
-              const active = a.id === selected?.id;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => setSelectedAccountId(a.id)}
-                  className={
-                    active
-                      ? "rounded-full border border-fg/30 bg-bg-subtle px-3 py-1.5 text-xs font-medium text-fg"
-                      : "rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:bg-bg-subtle hover:text-fg"
-                  }
-                >
-                  {a.displayName}
-                  {a.accountMask ? ` ${a.accountMask}` : ""}
-                  <span className="ml-1 text-fg-subtle">· {a.broker}</span>
-                </button>
-              );
-            })}
+        {/* Account picker — chips show NLV so selection is obvious */}
+        {visibleAccounts.length > 0 ? (
+          <section className="mt-8">
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold text-fg">Accounts</h2>
+              <p className="text-xs text-fg-muted">
+                Chart and positions below are for the selected account only
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              {visibleAccounts.map((a) => {
+                const active = a.id === selected?.id;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setSelectedAccountId(a.id)}
+                    className={
+                      active
+                        ? "flex min-w-[min(100%,14rem)] flex-col items-start rounded-[var(--radius-md)] border border-fg/35 bg-bg-subtle px-3 py-2.5 text-left"
+                        : "flex min-w-[min(100%,14rem)] flex-col items-start rounded-[var(--radius-md)] border border-border bg-bg px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle"
+                    }
+                  >
+                    <span
+                      className={
+                        active
+                          ? "text-xs font-semibold text-fg"
+                          : "text-xs font-medium text-fg-muted"
+                      }
+                    >
+                      {accountLabel(a)}
+                    </span>
+                    <span className="mt-1 text-sm font-semibold tabular-nums text-fg">
+                      {formatUsd(a.latestNlv)}
+                    </span>
+                    <span className="mt-0.5 text-[11px] text-fg-subtle">
+                      {a.broker}
+                      {active ? " · selected" : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        {/* Sticky-feel context bar for detail sections */}
+        {selected ? (
+          <div className="mt-8 rounded-[var(--radius-md)] border border-primary/25 bg-primary/5 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-fg-subtle">
+              Viewing account
+            </p>
+            <p className="mt-0.5 text-sm font-semibold text-fg">
+              {selectedTitle}
+              <span className="ml-2 font-normal text-fg-muted">
+                · {formatUsd(selected.latestNlv)}
+                {selected.latestAsOf ? ` · as of ${selected.latestAsOf}` : ""}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-fg-muted">
+              Chart and positions below apply only to this account — not the
+              workspace total.
+            </p>
           </div>
         ) : null}
 
-        <section className="mt-8 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
+        <section className="mt-4 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
           <div className="mb-4 flex items-center justify-between gap-2">
             <div>
               <h2 className="text-sm font-semibold">Account value over time</h2>
               <p className="text-xs text-fg-muted">
-                {selected?.displayName ?? "Primary account"}
-                {selected?.accountMask ? ` · ${selected.accountMask}` : ""}
+                {selectedTitle}
                 {selected?.isDemo ? " · sample" : ""}
                 {selected?.isSimulated ? " · simulated" : ""}
               </p>
@@ -417,7 +535,7 @@ function DashboardPage() {
           </div>
           {series.length === 0 && !detailLoading ? (
             <p className="py-10 text-center text-sm text-fg-muted">
-              No value history yet for this account. Run{" "}
+              No value history yet for {selectedTitle}. Run{" "}
               <Link
                 to="/connectors"
                 className="font-medium text-fg underline-offset-4 hover:underline"
@@ -433,7 +551,10 @@ function DashboardPage() {
 
         <section className="mt-6 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold">Positions</h2>
+            <div>
+              <h2 className="text-sm font-semibold">Positions</h2>
+              <p className="text-xs text-fg-muted">{selectedTitle}</p>
+            </div>
             {detailLoading ? (
               <Loader2 className="h-4 w-4 animate-spin text-fg-muted" />
             ) : (
@@ -444,7 +565,7 @@ function DashboardPage() {
           </div>
           {positions.length === 0 && !detailLoading ? (
             <p className="py-6 text-center text-sm text-fg-muted">
-              No positions stored for this account yet.
+              No positions stored for {selectedTitle} yet.
             </p>
           ) : (
             <PositionsTable positions={positions} />
