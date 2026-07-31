@@ -2,28 +2,36 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle,
+  Beaker,
   CheckCircle2,
   Link2,
   Loader2,
   RefreshCw,
+  ShieldCheck,
   Unplug,
 } from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { RedirectToSignIn } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
 import {
+  clearSimulatedSchwabFn,
   connectBrokerFn,
   disconnectBrokerFn,
   getConnectors,
+  seedSimulatedSchwabFn,
   syncBrokersFn,
   type ConnectorStatus,
 } from "@/lib/portfolio/connector-queries";
+import { navigateToBrokerOAuth } from "@/lib/portfolio/oauth-navigate";
 import type { BrokerId } from "@/lib/portfolio/brokers/catalog";
+import { BROKER_READ_ONLY_PROMISE } from "@/lib/portfolio/brokers/read-only-policy";
 import {
   classifyConnectorUiStatus,
   connectorUiLabel,
+  isLinkedStatus,
   primaryConnectCta,
 } from "@/lib/portfolio/connector-status";
+import { formatUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/connectors/")({
   component: ConnectorsPage,
@@ -42,6 +50,16 @@ function friendlyOAuthError(reason: string | null): string {
     default:
       return "We couldn’t finish connecting that broker. Nothing was saved — try again.";
   }
+}
+
+function labelBroker(b: string): string {
+  const map: Record<string, string> = {
+    schwab: "Charles Schwab",
+    robinhood: "Robinhood",
+    ibkr: "Interactive Brokers",
+    fidelity: "Fidelity",
+  };
+  return map[b] || b;
 }
 
 function ConnectorsPage() {
@@ -65,7 +83,7 @@ function ConnectorsPage() {
     if (oauth === "success") {
       const b = params.get("broker") ?? "your broker";
       setNotice(
-        `${labelBroker(b)} is connected. Your balances stay private to this workspace.`,
+        `${labelBroker(b)} is connected (read-only). Balances stay private to this workspace.`,
       );
       window.history.replaceState({}, "", "/connectors");
     } else if (oauth === "error") {
@@ -100,17 +118,18 @@ function ConnectorsPage() {
   async function run(
     key: string,
     fn: () => Promise<unknown>,
-    okMsg: string,
+    okMsg: string | ((result: unknown) => string),
   ) {
     setBusy(key);
     setError(null);
     setNotice(null);
     try {
-      await fn();
+      const result = await fn();
       await reload();
-      setNotice(okMsg);
+      setNotice(typeof okMsg === "function" ? okMsg(result) : okMsg);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Action failed");
+      await reload().catch(() => undefined);
     } finally {
       setBusy(null);
     }
@@ -125,17 +144,22 @@ function ConnectorsPage() {
         data: { broker, origin: window.location.origin },
       });
       if (result.kind === "oauth_redirect") {
-        window.location.href = result.authorizeUrl;
+        navigateToBrokerOAuth(result.authorizeUrl);
         return;
       }
-      setError(result.message);
-      await reload();
+      window.location.href = `/connectors/setup/${broker}`;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Connect failed");
     } finally {
       setBusy(null);
     }
   }
+
+  const schwab = items.find((c) => c.broker === "schwab");
+  const hasSim = Boolean(schwab?.isSimulated);
+  const hasRealSchwab = Boolean(
+    schwab && isLinkedStatus(schwab.status) && !schwab.isSimulated,
+  );
 
   return (
     <AppShell>
@@ -147,104 +171,151 @@ function ConnectorsPage() {
           Connect accounts
         </h1>
         <p className="mt-2 max-w-xl text-sm leading-relaxed text-fg-muted">
-          Link a brokerage so this workspace can show your real balances and
-          holdings. You approve access at the broker — we never ask for your
-          brokerage password here.
+          Link brokers for{" "}
+          <strong className="font-medium text-fg">read-only</strong> analysis
+          (balances and holdings). Open this preview in its own browser tab
+          before approving access.{" "}
+          <strong className="font-medium text-fg">Sync</strong> re-imports
+          positions — it never places orders.
         </p>
 
-        {error && error !== "unauthorized" ? (
-          <div className="mt-6 flex items-start gap-2 rounded-[var(--radius-md)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
-            <span>{error}</span>
+        <div className="mt-4 flex items-start gap-2 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-3 text-xs leading-relaxed text-fg-muted">
+          <ShieldCheck
+            className="mt-0.5 h-4 w-4 shrink-0 text-success"
+            aria-hidden
+          />
+          <span>{BROKER_READ_ONLY_PROMISE}</span>
+        </div>
+
+        {!hasRealSchwab ? (
+          <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-4">
+            <div className="flex items-start gap-2">
+              <Beaker className="mt-0.5 h-4 w-4 shrink-0 text-fg-muted" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-fg">
+                  Simulated Schwab import
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-fg-muted">
+                  Load multi-account sample Schwab holdings (SGOV, TSLA,
+                  IBIT…) so the dashboard switches off the demo fund. Not real
+                  money — safe for preview. Clear anytime.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={busy != null}
+                    onClick={() =>
+                      void run(
+                        "seed-sim",
+                        () => seedSimulatedSchwabFn(),
+                        (r) => {
+                          const x = r as {
+                            accountCount?: number;
+                            totalNlv?: number;
+                          };
+                          return `Simulated Schwab loaded: ${x.accountCount ?? 3} accounts · ${formatUsd(x.totalNlv ?? null)}. Open Dashboard.`;
+                        },
+                      )
+                    }
+                    className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-sm)] bg-primary px-3 text-xs font-medium text-primary-fg"
+                  >
+                    {busy === "seed-sim" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Beaker className="h-3.5 w-3.5" />
+                    )}
+                    {hasSim ? "Reload simulated Schwab" : "Load simulated Schwab"}
+                  </button>
+                  {hasSim ? (
+                    <button
+                      type="button"
+                      disabled={busy != null}
+                      onClick={() =>
+                        void run(
+                          "clear-sim",
+                          () => clearSimulatedSchwabFn(),
+                          "Simulation cleared — sample fund is primary again.",
+                        )
+                      }
+                      className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg"
+                    >
+                      Clear simulation
+                    </button>
+                  ) : null}
+                  <Link
+                    to="/dashboard"
+                    className="inline-flex h-10 items-center rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg-muted hover:text-fg"
+                  >
+                    Open dashboard
+                  </Link>
+                </div>
+              </div>
+            </div>
           </div>
         ) : null}
+
         {notice ? (
-          <div className="mt-6 flex items-start gap-2 rounded-[var(--radius-md)] border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
-            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <div className="mt-6 flex items-start gap-2 rounded-[var(--radius-lg)] border border-success/30 bg-success/10 px-4 py-3 text-sm text-success">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
             <span>{notice}</span>
           </div>
         ) : null}
+        {error && error !== "unauthorized" ? (
+          <div className="mt-6 flex items-start gap-2 rounded-[var(--radius-lg)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>{error}</span>
+          </div>
+        ) : null}
 
-        <div className="mt-8 space-y-4">
+        <div className="mt-8 space-y-3">
           {items.map((c) => {
-            const broker = c.broker as BrokerId;
-            const cta = primaryConnectCta({
-              status: c.status,
-              oauthConfigured: c.oauthConfigured,
-            });
             const ui = classifyConnectorUiStatus({
               status: c.status,
               oauthConfigured: c.oauthConfigured,
             });
+            const cta = primaryConnectCta({
+              status: c.status,
+              oauthConfigured: c.oauthConfigured,
+            });
+            const linked = isLinkedStatus(c.status);
+            const needsReauth = c.status === "error" && !c.isSimulated;
             return (
-              <article
+              <div
                 key={c.broker}
-                className="rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-5 sm:p-6"
+                className="flex flex-col gap-3 rounded-[var(--radius-lg)] border border-border bg-bg-elevated p-4 sm:flex-row sm:items-center sm:justify-between"
               >
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-base font-semibold text-fg">
-                        {c.label}
-                      </h2>
-                      <StatusPill ui={ui} />
-                    </div>
-                    <p className="mt-1 text-sm text-fg-muted">{c.description}</p>
-                    <p className="mt-1 text-xs text-fg-subtle">
-                      {c.oauthConfigured
-                        ? "Ready to connect"
-                        : "Follow the short setup guide to finish linking"}
-                      {c.accountCount > 0
-                        ? ` · ${c.accountCount} account${c.accountCount === 1 ? "" : "s"} linked`
-                        : ""}
-                    </p>
-                    {c.lastSyncAt ? (
-                      <p className="mt-1 text-xs text-fg-subtle">
-                        Last updated {new Date(c.lastSyncAt).toLocaleString()}
-                      </p>
-                    ) : null}
-                    {c.lastError ? (
-                      <p className="mt-1 text-xs text-danger">{c.lastError}</p>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-base font-semibold text-fg">
+                      {c.label}
+                    </h2>
+                    <span className="rounded-full border border-border px-2 py-0.5 text-[11px] text-fg-muted">
+                      {c.isSimulated ? "Simulated" : connectorUiLabel(ui)}
+                    </span>
+                    <span className="rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[11px] text-success">
+                      Read-only
+                    </span>
+                    {c.accountCount > 0 ? (
+                      <span className="text-[11px] text-fg-subtle">
+                        {c.accountCount} account
+                        {c.accountCount === 1 ? "" : "s"}
+                      </span>
                     ) : null}
                   </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {cta === "how_to_connect" ? (
-                      <Link
-                        to="/connectors/setup/$broker"
-                        params={{ broker }}
-                        className="inline-flex h-10 min-h-10 items-center gap-2 rounded-[var(--radius-sm)] bg-primary px-4 text-sm font-medium text-primary-fg transition-opacity hover:opacity-90"
-                      >
-                        <Link2 className="h-4 w-4" aria-hidden />
-                        How to connect
-                      </Link>
-                    ) : null}
-                    {cta === "connect" ? (
-                      <>
-                        <button
-                          type="button"
-                          disabled={busy != null}
-                          onClick={() => void onConnect(broker)}
-                          className="inline-flex h-10 min-h-10 items-center gap-2 rounded-[var(--radius-sm)] bg-primary px-4 text-sm font-medium text-primary-fg transition-opacity hover:opacity-90 disabled:opacity-40"
-                        >
-                          {busy === `connect-${c.broker}` ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Link2 className="h-4 w-4" aria-hidden />
-                          )}
-                          Connect
-                        </button>
-                        <Link
-                          to="/connectors/setup/$broker"
-                          params={{ broker }}
-                          className="inline-flex h-10 min-h-10 items-center rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg-muted hover:bg-bg-subtle"
-                        >
-                          Setup help
-                        </Link>
-                      </>
-                    ) : null}
-                    {cta === "refresh_disconnect" ? (
-                      <>
+                  <p className="mt-1 text-sm text-fg-muted">{c.description}</p>
+                  {c.lastError && !c.isSimulated ? (
+                    <p className="mt-1 text-xs text-danger">
+                      {c.lastError}
+                      {!needsReauth
+                        ? " — connection kept; retry Sync when ready."
+                        : " — re-authorize to restore the live link."}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  {linked ? (
+                    <>
+                      {!c.isSimulated ? (
                         <button
                           type="button"
                           disabled={busy != null}
@@ -252,101 +323,84 @@ function ConnectorsPage() {
                             void run(
                               `sync-${c.broker}`,
                               () =>
-                                syncBrokersFn({
-                                  data: { broker },
-                                }),
-                              `${c.label} updated`,
+                                syncBrokersFn({ data: { broker: c.broker } }),
+                              "Sync finished (read-only import).",
                             )
                           }
-                          className="inline-flex h-10 min-h-10 items-center gap-2 rounded-[var(--radius-sm)] border border-border bg-bg px-4 text-sm font-medium text-fg transition-colors hover:bg-bg-subtle disabled:opacity-40"
+                          className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg"
                         >
                           {busy === `sync-${c.broker}` ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           ) : (
-                            <RefreshCw className="h-4 w-4" aria-hidden />
+                            <RefreshCw className="h-3.5 w-3.5" />
                           )}
-                          Refresh
+                          {needsReauth ? "Retry sync" : "Sync"}
                         </button>
+                      ) : null}
+                      {needsReauth ? (
                         <button
                           type="button"
                           disabled={busy != null}
-                          onClick={() =>
-                            void run(
-                              `disc-${c.broker}`,
-                              () =>
-                                disconnectBrokerFn({
-                                  data: { broker },
-                                }),
-                              `${c.label} disconnected`,
-                            )
-                          }
-                          className="inline-flex h-10 min-h-10 items-center gap-2 rounded-[var(--radius-sm)] border border-border bg-bg px-4 text-sm font-medium text-fg-muted transition-colors hover:bg-bg-subtle disabled:opacity-40"
+                          onClick={() => void onConnect(c.broker)}
+                          className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-sm)] bg-primary px-3 text-xs font-medium text-primary-fg"
                         >
-                          {busy === `disc-${c.broker}` ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                          {busy === `connect-${c.broker}` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           ) : (
-                            <Unplug className="h-4 w-4" aria-hidden />
+                            <Link2 className="h-3.5 w-3.5" />
                           )}
-                          Disconnect
+                          Reconnect
                         </button>
-                      </>
-                    ) : null}
-                  </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={busy != null}
+                        onClick={() =>
+                          void run(
+                            `disc-${c.broker}`,
+                            () =>
+                              disconnectBrokerFn({
+                                data: { broker: c.broker },
+                              }),
+                            c.isSimulated
+                              ? "Simulation cleared."
+                              : "Disconnected.",
+                          )
+                        }
+                        className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg"
+                      >
+                        <Unplug className="h-3.5 w-3.5" />
+                        {c.isSimulated ? "Clear sim" : "Disconnect"}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy != null}
+                      onClick={() => void onConnect(c.broker)}
+                      className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-sm)] bg-primary px-3 text-xs font-medium text-primary-fg"
+                    >
+                      {busy === `connect-${c.broker}` ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Link2 className="h-3.5 w-3.5" />
+                      )}
+                      {cta === "how_to_connect" ? "Set up" : "Connect"}
+                    </button>
+                  )}
+                  <Link
+                    to="/connectors/setup/$broker"
+                    params={{ broker: c.broker }}
+                    className="inline-flex h-10 items-center rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg-muted hover:text-fg"
+                  >
+                    Details
+                  </Link>
                 </div>
-              </article>
+              </div>
             );
           })}
-        </div>
-
-        <div className="mt-8 rounded-[var(--radius-lg)] border border-border bg-bg p-5 text-sm leading-relaxed text-fg-muted">
-          <p className="font-medium text-fg">What to expect</p>
-          <ul className="mt-2 list-disc space-y-1.5 pl-5">
-            <li>
-              You’ll sign in with the broker and approve read access for this
-              app.
-            </li>
-            <li>
-              Linked accounts appear only in{" "}
-              <strong className="font-medium text-fg">your</strong> workspace.
-            </li>
-            <li>You can disconnect anytime.</li>
-            <li>
-              Stay signed into this app while you finish at the broker so the
-              connection can complete securely.
-            </li>
-          </ul>
-          <p className="mt-4">
-            <Link
-              to="/dashboard"
-              className="font-medium text-fg underline-offset-4 hover:underline"
-            >
-              Back to dashboard
-            </Link>
-          </p>
         </div>
       </main>
     </AppShell>
   );
-}
-
-function labelBroker(id: string): string {
-  if (id === "schwab") return "Schwab";
-  if (id === "robinhood") return "Robinhood";
-  if (id === "ibkr") return "Interactive Brokers";
-  return id;
-}
-
-function StatusPill({
-  ui,
-}: {
-  ui: ReturnType<typeof classifyConnectorUiStatus>;
-}) {
-  const label = connectorUiLabel(ui);
-  const className =
-    ui === "connected"
-      ? "rounded-full border border-success/40 bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
-      : ui === "needs_attention"
-        ? "rounded-full border border-danger/40 bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
-        : "rounded-full border border-border bg-bg-subtle px-2 py-0.5 text-[11px] font-medium text-fg-muted";
-  return <span className={className}>{label}</span>;
 }

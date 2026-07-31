@@ -57,7 +57,13 @@ export async function getSessionUser(
   bearerToken?: string,
 ): Promise<VerifiedUser | null> {
   if (!authConfigured) return null;
-  const request = getRequest();
+  let request: Request | null = null;
+  try {
+    request = getRequest();
+  } catch {
+    // No request ALS (unit tests / background jobs) — treat as signed out.
+    return null;
+  }
   if (!request) return null;
   let headers = request.headers;
   if (bearerToken) {

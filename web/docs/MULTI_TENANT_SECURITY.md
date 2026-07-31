@@ -19,6 +19,20 @@ This repository is **public**. The product is **hosted multi-tenant only**.
 5. **Redaction** — log and audit payloads run through redaction helpers before write.
 6. **Auth** — portfolio API/MCP require a verified session or tenant API key; fail closed.
 7. **No secrets in the worktree** — Vercel/Neon inject env at deploy; do not commit `.env`.
+8. **Broker connectors are read-only** — never place orders, preview trades, or move money. See [BROKER_READ_ONLY.md](./BROKER_READ_ONLY.md).
+
+## Preview / dev / CI database isolation (hard rule)
+
+| Environment | Database | Notes |
+|-------------|----------|--------|
+| Live preview / local `npm run dev` | **Isolated PGLite** | Ephemeral; never the publish Neon |
+| CI / unit tests | **Isolated** (PGLite or throwaway) | No production credentials |
+| Published `*.grok.me` | **Publish Neon only** | Platform or agent bootstrap URL |
+
+- **Never** point preview, local dev, or CI at the production / publish Neon URL.
+- `resolveDatabaseUrl()` refuses the bootstrap URL when PGLite is usable (preview/agent).
+- `startup.sh` unsets `DATABASE_URL` and deletes `.env.local` so revive cannot re-attach prod.
+- Testing Schwab/Robinhood OAuth in preview requires a **separate** sandbox app registration / tokens, not prod user tokens.
 
 ## Reporting a leak
 
@@ -38,7 +52,3 @@ Tenant-scoped only. Open `connector_secrets` for that connector’s `tenant_id`
 only. Failures mark only that connector — never another tenant.
 
 ## OAuth session bind
-
-Broker OAuth start stores the authenticated user id in state. Callback rejects
-mismatches. Tenant id for token storage comes from the server session, not the
-client body.

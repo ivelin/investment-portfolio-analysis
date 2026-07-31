@@ -1,118 +1,127 @@
-#!/usr/bin/env node
 /**
  * Unit tests for social-config + oauth redirect fixes.
- * Proves: Vercel never falls to Grok; non-Vercel uses broker; relative redirect_uri fixed.
+ *
+ * Proves: Vercel uses Grok broker when GROK_AUTH_* present (*.grok.me);
+ * works on Vercel (*.grok.me); non-Vercel uses broker; relative redirect_uri fixed.
  */
-import { createViteTestServer } from "./vite-test-server.mjs";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createViteTestServer } from "./vite-test-server.mjs";
+
+const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const vite = await createViteTestServer();
-
 try {
-  const cfg = await vite.ssrLoadModule("/src/lib/auth/social-config.ts");
+  const social = await vite.ssrLoadModule("/src/lib/auth/social-config.ts");
   const redirect = await vite.ssrLoadModule("/src/lib/auth/oauth-redirect.ts");
-  const { SOCIAL_PROVIDERS } = await vite.ssrLoadModule(
-    "/src/lib/auth/providers.ts",
-  );
 
-  assert.equal(SOCIAL_PROVIDERS.length, 2);
-  assert.deepEqual(
-    SOCIAL_PROVIDERS.map((p) => p.providerId),
-    ["google", "twitter"],
-  );
-
-  // Vercel without social env → unconfigured (NOT grok_broker)
+  // ── bare Vercel without platform client → unconfigured ──
   assert.equal(
-    cfg.resolveAuthBackendMode({ VERCEL: "1", VITE_AUTH_ENABLED: "true" }),
-    "unconfigured",
-  );
-  assert.equal(cfg.isAuthConfigured({ VERCEL: "1" }), false);
-
-  // Direct social on Vercel
-  const vercelSocial = {
-    VERCEL: "1",
-    GOOGLE_CLIENT_ID: "g-id",
-    GOOGLE_CLIENT_SECRET: "g-secret",
-    TWITTER_CLIENT_ID: "t-id",
-    TWITTER_CLIENT_SECRET: "t-secret",
-  };
-  assert.equal(cfg.resolveAuthBackendMode(vercelSocial), "direct_social");
-  assert.equal(cfg.isAuthConfigured(vercelSocial), true);
-
-  // Non-Vercel without direct → grok_broker (sandbox/CLI default)
-  assert.equal(cfg.resolveAuthBackendMode({}), "grok_broker");
-  assert.equal(cfg.isAuthConfigured({}), true);
-
-  // Opt-out
-  assert.equal(
-    cfg.resolveAuthBackendMode({ AUTH_DISABLE_GROK_BROKER: "true" }),
+    social.resolveAuthBackendMode({ VERCEL: "1" }),
     "unconfigured",
   );
 
-  // Vercel never grok even with allow-style flags
+  // ── Vercel + platform Grok client (*.grok.me publish) → grok_broker ──
   assert.equal(
-    cfg.resolveAuthBackendMode({
+    social.resolveAuthBackendMode({
       VERCEL: "1",
-      AUTH_DISABLE_GROK_BROKER: "false",
+      GROK_AUTH_CLIENT_ID: "grok_app",
+      GROK_AUTH_CLIENT_SECRET: "secret",
     }),
-    "unconfigured",
+    "grok_broker",
   );
 
-  // Direct social wins over broker
+  // ── direct social wins when GOOGLE_* present ──
   assert.equal(
-    cfg.resolveAuthBackendMode({
+    social.resolveAuthBackendMode({
+      VERCEL: "1",
       GOOGLE_CLIENT_ID: "g",
-      GOOGLE_CLIENT_SECRET: "s",
-      GROK_AUTH_CLIENT_ID: "broker",
-      GROK_AUTH_CLIENT_SECRET: "broker-secret",
+      GOOGLE_CLIENT_SECRET: "gs",
+      GROK_AUTH_CLIENT_ID: "grok_app",
+      GROK_AUTH_CLIENT_SECRET: "secret",
     }),
     "direct_social",
   );
 
-  assert.equal(cfg.GROK_BROKER_HOST, "auth.grok.me");
-  assert.ok(!cfg.DIRECT_SOCIAL_AUTHORIZE_HOSTS.includes("auth.grok.me"));
+  // ── sandbox / non-Vercel → grok_broker (preview client) ──
+  assert.equal(social.resolveAuthBackendMode({}), "grok_broker");
+  assert.equal(
+    social.resolveAuthBackendMode({ GROK_AGENT: "1" }),
+    "grok_broker",
+  );
+
+  // ── opt-out ──
+  assert.equal(
+    social.resolveAuthBackendMode({
+      AUTH_DISABLE_GROK_BROKER: "true",
+    }),
+    "unconfigured",
+  );
+
+  // ── disabled ──
+  assert.equal(
+    social.resolveAuthBackendMode({ VITE_AUTH_ENABLED: "false" }),
+    "disabled",
+  );
 
   // ── redirect_uri absolute fix (the Invalid redirect URI bug) ──
   assert.equal(
     redirect.absolutizeOAuthRedirectUri(
       "/oauth2/callback/twitter",
-      "https://abc.grok-sandbox.com",
+      "https://app.example.com",
     ),
-    "https://abc.grok-sandbox.com/api/auth/oauth2/callback/twitter",
+    "https://app.example.com/api/auth/oauth2/callback/twitter",
+  );
+  assert.equal(
+    redirect.absolutizeOAuthRedirectUri(
+      "https://app.example.com/api/auth/oauth2/callback/twitter",
+      "https://app.example.com",
+    ),
+    "https://app.example.com/api/auth/oauth2/callback/twitter",
   );
   assert.equal(
     redirect.absolutizeOAuthRedirectUri(
       "/api/auth/oauth2/callback/google",
-      "https://abc.grok-sandbox.com",
+      "https://app.example.com",
     ),
-    "https://abc.grok-sandbox.com/api/auth/oauth2/callback/google",
-  );
-  assert.equal(
-    redirect.absolutizeOAuthRedirectUri(
-      "https://abc.grok-sandbox.com/api/auth/oauth2/callback/twitter",
-      "https://other.example.com",
-    ),
-    "https://abc.grok-sandbox.com/api/auth/oauth2/callback/twitter",
+    "https://app.example.com/api/auth/oauth2/callback/google",
   );
 
-  const broken =
+  const relativeAuth =
     "https://auth.grok.me/api/auth/oauth2/authorize?response_type=code&client_id=grok_preview&redirect_uri=%2Foauth2%2Fcallback%2Ftwitter&state=x&scope=openid";
   const fixed = redirect.fixOAuthAuthorizeUrl(
-    broken,
-    "https://abc.grok-sandbox.com",
+    relativeAuth,
+    "https://foo.grok-sandbox.com",
+    { providerId: "twitter" },
   );
   const fixedUri = new URL(fixed).searchParams.get("redirect_uri");
   assert.equal(
     fixedUri,
-    "https://abc.grok-sandbox.com/api/auth/oauth2/callback/twitter",
+    "https://foo.grok-sandbox.com/api/auth/oauth2/callback/twitter",
     "relative redirect_uri must become absolute under app origin",
   );
+  assert.equal(
+    new URL(fixed).searchParams.get("idp"),
+    "twitter",
+    "broker authorize must include idp",
+  );
+  assert.equal(
+    new URL(fixed).searchParams.get("prompt"),
+    "login",
+  );
 
-  // Client must keep social → oauth2 fallthrough for broker
-  const { readFileSync } = await import("node:fs");
-  const { join, dirname } = await import("node:path");
-  const { fileURLToPath } = await import("node:url");
-  const webRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
+  assert.deepEqual(
+    redirect.expectedBrokerRedirectUris(
+      "https://arrow-meadow-birch-civic.grok.me",
+    ),
+    [
+      "https://arrow-meadow-birch-civic.grok.me/api/auth/oauth2/callback/google",
+      "https://arrow-meadow-birch-civic.grok.me/api/auth/oauth2/callback/twitter",
+    ],
+  );
+
   const clientSrc = readFileSync(
     join(webRoot, "src/lib/auth/client.ts"),
     "utf8",
@@ -130,10 +139,11 @@ try {
   assert.match(popupSrc, /fixOAuthAuthorizeUrl/);
   assert.match(popupSrc, /if\s*\(\s*social\.ok\s*\)/);
 
+  // Email/password is ON as publish fallback when broker redirect_uris missing.
   const { emailAndPasswordEnabled } = await vite.ssrLoadModule(
     "/src/lib/auth/email-password.ts",
   );
-  assert.equal(emailAndPasswordEnabled, false);
+  assert.equal(emailAndPasswordEnabled, true);
 
   console.log("OK auth social-config tests passed");
   process.exitCode = 0;

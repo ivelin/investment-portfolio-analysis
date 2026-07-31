@@ -1,5 +1,9 @@
 import { getSql } from "@/lib/db";
 import { newId } from "@/lib/security/ids";
+import {
+  pickPrimaryAccount,
+  workspaceIsDemoOnly,
+} from "./dashboard-selection";
 import type {
   AccountSummary,
   DashboardPayload,
@@ -18,6 +22,19 @@ const DEMO_SYMBOLS = [
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
+}
+
+function periodReturnPct(series: FundSeriesPoint[]): number | null {
+  if (series.length < 2) return null;
+  const firstNlv = series[0].liquidationValue;
+  const lastNlv = series[series.length - 1].liquidationValue;
+  if (!(firstNlv > 0) || !Number.isFinite(lastNlv)) return null;
+  const firstIdx = series[0].twrrIndex;
+  const lastIdx = series[series.length - 1].twrrIndex;
+  if (firstIdx > 0 && lastIdx > 0 && Math.abs(lastIdx - firstIdx) > 1e-9) {
+    return (lastIdx / firstIdx - 1) * 100;
+  }
+  return (lastNlv / firstNlv - 1) * 100;
 }
 
 /** Seed a labeled synthetic demo fund for a brand-new tenant. */
@@ -44,7 +61,6 @@ export async function seedDemoPortfolio(tenantId: string): Promise<void> {
     )
   `;
 
-  // ~90 days of synthetic NLV series
   const today = new Date();
   let nlv = 100_000;
   let index = 100;
@@ -130,7 +146,18 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
       ) as latest_as_of
     from broker_accounts a
     where a.tenant_id = ${tenantId}
-    order by a.is_demo desc, a.created_at asc
+    order by a.is_demo asc,
+      coalesce(
+        (
+          select s.liquidation_value
+          from gt_fund_equity_snapshots s
+          where s.tenant_id = a.tenant_id and s.account_id = a.id
+          order by s.as_of_date desc
+          limit 1
+        ),
+        0
+      ) desc,
+      a.created_at asc
   `;
   return rows.map((r) => ({
     id: r.id,
@@ -198,6 +225,23 @@ export async function getFundSeries(
     where tenant_id = ${tenantId} and account_id = ${accountId}
     order by as_of_date asc
   `;
+  if (rows.length === 0) {
+    const snaps = await sql<{
+      as_of_date: string;
+      liquidation_value: number;
+    }>`
+      select as_of_date::text as as_of_date, liquidation_value
+      from gt_fund_equity_snapshots
+      where tenant_id = ${tenantId} and account_id = ${accountId}
+      order by as_of_date asc
+    `;
+    return snaps.map((r) => ({
+      asOfDate: r.as_of_date,
+      liquidationValue: Number(r.liquidation_value),
+      twrrIndex: 100,
+      dailyReturn: null,
+    }));
+  }
   const mapped = rows.map((r) => ({
     asOfDate: r.as_of_date,
     liquidationValue: Number(r.liquidation_value),
@@ -218,7 +262,7 @@ export async function resolveAccountId(
   if (accountId) {
     return accounts.some((a) => a.id === accountId) ? accountId : null;
   }
-  return accounts[0]?.id ?? null;
+  return pickPrimaryAccount(accounts)?.id ?? null;
 }
 
 export async function getConnectorStatuses(tenantId: string) {
@@ -229,19 +273,16 @@ export async function getConnectorStatuses(tenantId: string) {
 export async function getWorkspaceSummary(
   tenantId: string,
   tenant: { id: string; name: string; slug: string; plan: string },
+  primaryAccountId?: string | null,
 ): Promise<WorkspaceSummary> {
   const accounts = await listAccounts(tenantId);
-  const primary = accounts[0];
+  const live = accounts.filter((a) => !a.isDemo);
+  const primary = pickPrimaryAccount(accounts, primaryAccountId);
   let twrrPeriodReturnPct: number | null = null;
   if (primary) {
     const series = await getFundSeries(tenantId, primary.id);
-    if (series.length >= 2) {
-      const first = series[0].twrrIndex;
-      const last = series[series.length - 1].twrrIndex;
-      if (first > 0) twrrPeriodReturnPct = ((last / first) - 1) * 100;
-    }
+    twrrPeriodReturnPct = periodReturnPct(series);
   }
-  const live = accounts.filter((a) => !a.isDemo);
   const latestNlv =
     live.length > 0
       ? live.reduce((s, a) => s + (a.latestNlv ?? 0), 0)
@@ -254,19 +295,60 @@ export async function getWorkspaceSummary(
     latestNlv,
     latestAsOf: primary?.latestAsOf ?? null,
     twrrPeriodReturnPct,
-    isDemo: live.length === 0,
+    isDemo: workspaceIsDemoOnly(accounts),
     accountCount: accounts.length,
+  };
+}
+
+export type AccountPortfolio = {
+  accountId: string;
+  series: FundSeriesPoint[];
+  positions: PositionRow[];
+  periodReturnPct: number | null;
+  latestNlv: number | null;
+  latestAsOf: string | null;
+};
+
+/** Chart + positions for one account (tenant-scoped). */
+export async function getAccountPortfolio(
+  tenantId: string,
+  accountId: string,
+): Promise<AccountPortfolio | null> {
+  const accounts = await listAccounts(tenantId);
+  const acct = accounts.find((a) => a.id === accountId);
+  if (!acct) return null;
+  const series = await getFundSeries(tenantId, accountId);
+  const positions = await getPositions(tenantId, accountId);
+  return {
+    accountId,
+    series,
+    positions,
+    periodReturnPct: periodReturnPct(series),
+    latestNlv: acct.latestNlv,
+    latestAsOf: acct.latestAsOf,
   };
 }
 
 export async function getDashboardPayload(
   tenantId: string,
   tenant: { id: string; name: string; slug: string; plan: string },
+  preferredAccountId?: string | null,
 ): Promise<DashboardPayload> {
   const accounts = await listAccounts(tenantId);
-  const primary = accounts[0];
+  // Prefer linked/live; never default chart/positions to sample when live exists.
+  const primary = pickPrimaryAccount(accounts, preferredAccountId);
   const series = primary ? await getFundSeries(tenantId, primary.id) : [];
   const positions = primary ? await getPositions(tenantId, primary.id) : [];
-  const workspace = await getWorkspaceSummary(tenantId, tenant);
-  return { workspace, accounts, series, positions };
+  const workspace = await getWorkspaceSummary(tenantId, tenant, primary?.id);
+  if (primary) {
+    workspace.twrrPeriodReturnPct = periodReturnPct(series);
+    workspace.latestAsOf = primary.latestAsOf;
+  }
+  return {
+    workspace,
+    accounts,
+    series,
+    positions,
+    selectedAccountId: primary?.id ?? null,
+  };
 }

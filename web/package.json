@@ -8,7 +8,9 @@
   },
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 8080",
+    "prebuild": "node scripts/ensure-publish-db.mjs",
     "build": "vite build && npm run db:migrate",
+    "db:ensure": "node scripts/ensure-publish-db.mjs",
     "db:migrate": "node scripts/migrate.mjs",
     "build:dev": "vite build --mode development",
     "preview": "vite preview --host 0.0.0.0 --port 8080",
@@ -25,11 +27,15 @@
     "test:auth-status": "node scripts/run-tests.mjs auth-status",
     "test:auth-social": "node scripts/run-tests.mjs auth-social",
     "ci": "npm run typecheck && npm run test:coverage && npm run test:e2e",
-    "test:unit": "node scripts/run-tests.mjs mece auth-status auth-social oauth-bind legal isolation token-refresh broker-setup",
+    "test:unit": "node scripts/run-tests.mjs mece auth-status auth-social oauth-bind legal isolation token-refresh broker-setup broker-readonly broker-sync oauth-callback db-isolation dashboard-switch",
     "test:api": "node scripts/run-tests.mjs api",
     "test:mcp": "node scripts/run-tests.mjs mcp",
     "test:e2e": "node scripts/run-tests.mjs e2e",
-    "test:coverage": "c8 --config .c8rc.json node scripts/run-tests.mjs mece auth-status auth-social oauth-bind legal isolation token-refresh broker-setup api mcp"
+    "test:coverage": "c8 --config .c8rc.json node scripts/run-tests.mjs mece auth-status auth-social oauth-bind legal isolation token-refresh broker-setup broker-readonly broker-sync oauth-callback db-isolation dashboard-switch api mcp",
+    "test:broker-readonly": "node scripts/run-tests.mjs broker-readonly",
+    "test:broker-sync": "node scripts/run-tests.mjs broker-sync",
+    "test:oauth-callback": "node scripts/run-tests.mjs oauth-callback",
+    "test:dashboard-switch": "node scripts/run-tests.mjs dashboard-switch"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.3",

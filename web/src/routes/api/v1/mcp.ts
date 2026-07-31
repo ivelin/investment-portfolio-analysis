@@ -3,6 +3,11 @@ import {
   jsonError,
   requireApiPrincipal,
 } from "@/lib/portfolio/api-auth.server";
+import {
+  assertBrokerConnectorsReadOnly,
+  assertMcpToolReadOnly,
+  BROKER_READ_ONLY_PROMISE,
+} from "@/lib/portfolio/brokers/read-only-policy";
 import { redactObject, redactText } from "@/lib/security/redact";
 
 /**
@@ -12,10 +17,14 @@ import { redactObject, redactText } from "@/lib/security/redact";
  * Isolation: tools always run against the principal's tenant only.
  * Parity: same PortfolioService as the web dashboard / REST.
  *
+ * HARD RULE: no broker order/trade tools. WRITE_TOOLS stays empty.
+ * Tools only read analysis data already stored in our tenant DB.
+ *
  * POST body: { "tool": string, "args"?: object }
  */
 
-/** Tools that mutate state — require write scope for API keys. */
+/** Tools that mutate app state — require write scope for API keys.
+ *  Broker trade/order tools are never listed here. */
 const WRITE_TOOLS = new Set<string>([]);
 
 export const TOOL_CATALOG = [
@@ -51,6 +60,9 @@ export async function runTool(
   tenantId: string,
   args: Record<string, unknown>,
 ): Promise<unknown> {
+  assertBrokerConnectorsReadOnly();
+  assertMcpToolReadOnly(tool);
+
   const { getSql } = await import("@/lib/db");
   const service = await import("@/lib/portfolio/service.server");
   const sql = await getSql();
@@ -76,7 +88,8 @@ export async function runTool(
       return {
         ...summary,
         security:
-          "Tenant-scoped. No connector secrets or raw account numbers.",
+          "Tenant-scoped. No connector secrets or raw account numbers. Read-only analysis.",
+        brokerAccess: "read_only_analysis",
       };
     }
     case "list_accounts":
@@ -110,7 +123,8 @@ export async function runTool(
     case "list_connectors":
       return {
         connectors: await service.getConnectorStatuses(tenantId),
-        note: "OAuth is per-tenant. Tokens are never returned.",
+        note: "OAuth is per-tenant. Tokens are never returned. Connectors are read-only.",
+        brokerAccess: "read_only_analysis",
       };
     default:
       return {
@@ -127,9 +141,12 @@ export async function mcpGetHandler(): Promise<Response> {
     mode: "multi-tenant",
     auth: ["session", "tenant_api_key"],
     tools: TOOL_CATALOG,
+    writeTools: [...WRITE_TOOLS],
+    placesOrders: false,
+    brokerAccess: "read_only_analysis",
     isolation:
       "Every tool is scoped to the caller's tenant. No shared broker feeds.",
-    note: "POST { tool, args }. Use the same reports as the web app.",
+    note: `POST { tool, args }. ${BROKER_READ_ONLY_PROMISE}`,
   });
 }
 
@@ -153,6 +170,19 @@ export async function mcpPostHandler({
     if (WRITE_TOOLS.has(tool) && principal.scopes === "read") {
       return Response.json(
         { ok: false, error: "API key scope is read-only" },
+        { status: 403 },
+      );
+    }
+    try {
+      assertMcpToolReadOnly(tool);
+    } catch (err) {
+      return Response.json(
+        {
+          ok: false,
+          error:
+            err instanceof Error ? err.message : "Broker write forbidden",
+          code: "BROKER_WRITE_FORBIDDEN",
+        },
         { status: 403 },
       );
     }

@@ -3,11 +3,11 @@
  * Used by server.ts and unit tests.
  *
  * Preference order:
- * 1. Direct Google + X when GOOGLE_* / TWITTER_* are set (Vercel product path)
- * 2. Grok broker for non-Vercel (sandbox preview, Grok CLI, *.grok.me)
- * 3. unconfigured on Vercel without social env (never silent Grok on Vercel)
+ * 1. Direct Google + X when GOOGLE_* / TWITTER_* are set (optional self-hosted path)
+ * 2. Grok broker when GROK_AUTH_* is injected (Grok App publish → *.grok.me)
+ *    or when not on bare Vercel (sandbox preview / CLI / local)
+ * 3. unconfigured on bare Vercel without social env and without platform client
  */
-
 export type SocialProviderId = "google" | "twitter";
 
 export type AuthBackendMode =
@@ -55,17 +55,20 @@ export function isGrokBrokerDisabled(env: EnvLike = process.env): boolean {
  *
  * - disabled: VITE_AUTH_ENABLED=false
  * - direct_social: GOOGLE_* and/or TWITTER_* present
- * - grok_broker: non-Vercel Grok sandbox / CLI / local (unless disabled)
- * - unconfigured: Vercel without social env, or broker explicitly disabled
+ * - grok_broker: platform-injected GROK_AUTH_* (*.grok.me) OR non-Vercel sandbox/CLI
+ * - unconfigured: bare Vercel without social env and without GROK_AUTH_*, or broker disabled
  */
 export function resolveAuthBackendMode(env: EnvLike = process.env): AuthBackendMode {
   if (trim(env, "VITE_AUTH_ENABLED") === "false") return "disabled";
   if (hasDirectSocialEnv(env)) return "direct_social";
-  // Never use Grok broker / preview client on Vercel deploys.
-  if (isVercelRuntime(env)) return "unconfigured";
   if (isGrokBrokerDisabled(env)) return "unconfigured";
-  // Grok sandbox live preview, CLI, local, *.grok.me — shared broker path.
-  return "grok_broker";
+  // Grok App publish hosts apps on Vercel but injects GROK_AUTH_* + DATABASE_URL.
+  // Must prefer the platform client — never fail closed to unconfigured there.
+  if (hasExplicitGrokClient(env)) return "grok_broker";
+  // Sandbox live preview, CLI, local — shared preview client fallback.
+  if (!isVercelRuntime(env)) return "grok_broker";
+  // Bare Vercel (user's own project) without social and without platform client.
+  return "unconfigured";
 }
 
 export function isAuthConfigured(env: EnvLike = process.env): boolean {

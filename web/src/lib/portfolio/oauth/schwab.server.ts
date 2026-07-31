@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import { getSql } from "@/lib/db";
+import { brokerFetch } from "@/lib/portfolio/brokers/broker-http";
+import { assertBrokerConnectorsReadOnly } from "@/lib/portfolio/brokers/read-only-policy";
 import { sealConnectorSecret, openConnectorSecret } from "./secrets.server";
 
-const SCHWAB_AUTH =
-  "https://api.schwabapi.com/v1/oauth/authorize";
-const SCHWAB_TOKEN =
-  "https://api.schwabapi.com/v1/oauth/token";
+const SCHWAB_AUTH = "https://api.schwabapi.com/v1/oauth/authorize";
+const SCHWAB_TOKEN = "https://api.schwabapi.com/v1/oauth/token";
+const SCHWAB_TRADER = "https://api.schwabapi.com/trader/v1";
 
 export type SchwabAppCredentials = {
   clientId: string;
@@ -64,8 +65,6 @@ export async function saveSchwabAppCredentials(args: {
   redirectUri: string;
 }): Promise<void> {
   const sql = await getSql();
-  // Store secret in platform table (app-level DCR/app credentials, not user tokens).
-  // For defense-in-depth we also keep a sealed copy in registration meta.
   const sealed = sealConnectorSecret({
     client_secret: args.clientSecret,
   });
@@ -93,11 +92,14 @@ export async function buildSchwabAuthorizeUrl(args: {
   redirectUri: string;
   stateId: string;
 }): Promise<{ authorizeUrl: string; codeVerifier: string }> {
+  assertBrokerConnectorsReadOnly();
   const creds = await resolveSchwabAppCredentials();
   if (!creds) throw new Error("Schwab app credentials not configured");
 
   const codeVerifier = b64url(randomBytes(32));
   const challenge = b64url(createHash("sha256").update(codeVerifier).digest());
+  // Scope "api" is required by Schwab Trader API apps. Access is still limited
+  // in *this product* to read-only portfolio calls (see brokerFetch policy).
   const params = new URLSearchParams({
     client_id: creds.clientId,
     redirect_uri: args.redirectUri || creds.redirectUri,
@@ -118,6 +120,7 @@ export async function exchangeSchwabCode(args: {
   redirectUri: string;
   codeVerifier: string;
 }): Promise<Record<string, unknown>> {
+  assertBrokerConnectorsReadOnly();
   const creds = await resolveSchwabAppCredentials();
   if (!creds) throw new Error("Schwab app credentials not configured");
 
@@ -130,16 +133,21 @@ export async function exchangeSchwabCode(args: {
     client_secret: creds.clientSecret,
   });
 
-  const res = await fetch(SCHWAB_TOKEN, {
+  const res = await brokerFetch(SCHWAB_TOKEN, {
+    purpose: "oauth_token",
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       accept: "application/json",
+      authorization: `Basic ${Buffer.from(`${creds.clientId}:${creds.clientSecret}`).toString("base64")}`,
     },
     body,
   });
   if (!res.ok) {
-    throw new Error(`Schwab token exchange failed (${res.status})`);
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Schwab token exchange failed (${res.status}): ${text.slice(0, 180)}`,
+    );
   }
   const json = (await res.json()) as {
     access_token?: string;
@@ -163,6 +171,7 @@ export async function refreshSchwabToken(args: {
   refreshToken: string;
   clientId?: string;
 }): Promise<Record<string, unknown>> {
+  assertBrokerConnectorsReadOnly();
   const creds = await resolveSchwabAppCredentials();
   const clientId = args.clientId || creds?.clientId;
   const clientSecret = creds?.clientSecret;
@@ -172,14 +181,14 @@ export async function refreshSchwabToken(args: {
   const body = new URLSearchParams({
     grant_type: "refresh_token",
     refresh_token: args.refreshToken,
-    client_id: clientId,
-    client_secret: clientSecret,
   });
-  const res = await fetch(SCHWAB_TOKEN, {
+  const res = await brokerFetch(SCHWAB_TOKEN, {
+    purpose: "oauth_token",
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       accept: "application/json",
+      authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
     },
     body,
   });
@@ -203,5 +212,123 @@ export async function refreshSchwabToken(args: {
   };
 }
 
-// silence unused import if tree-shaken tools expect open
+/**
+ * Read-only: accounts + positions for analysis.
+ * Never hits /orders or any write path (enforced by brokerFetch).
+ */
+export async function fetchSchwabPortfolio(accessToken: string): Promise<{
+  accounts: Array<{
+    accountNumber: string;
+    hashValue: string;
+    type?: string;
+    liquidationValue?: number;
+    cash?: number;
+  }>;
+  positions: Array<{
+    accountHash: string;
+    symbol: string;
+    quantity: number;
+    marketValue: number;
+    price: number;
+    assetType: string;
+  }>;
+}> {
+  assertBrokerConnectorsReadOnly();
+  const headers = {
+    authorization: `Bearer ${accessToken}`,
+    accept: "application/json",
+  };
+
+  const numRes = await brokerFetch(
+    `${SCHWAB_TRADER}/accounts/accountNumbers`,
+    {
+      purpose: "portfolio_read",
+      method: "GET",
+      headers,
+    },
+  );
+  if (!numRes.ok) {
+    throw new Error(`Schwab accountNumbers failed (${numRes.status})`);
+  }
+  const numbers = (await numRes.json()) as Array<{
+    accountNumber?: string;
+    hashValue?: string;
+  }>;
+
+  const accounts: Array<{
+    accountNumber: string;
+    hashValue: string;
+    type?: string;
+    liquidationValue?: number;
+    cash?: number;
+  }> = [];
+  const positions: Array<{
+    accountHash: string;
+    symbol: string;
+    quantity: number;
+    marketValue: number;
+    price: number;
+    assetType: string;
+  }> = [];
+
+  for (const n of numbers) {
+    if (!n.hashValue) continue;
+    const acctRes = await brokerFetch(
+      `${SCHWAB_TRADER}/accounts/${encodeURIComponent(n.hashValue)}?fields=positions`,
+      {
+        purpose: "portfolio_read",
+        method: "GET",
+        headers,
+      },
+    );
+    if (!acctRes.ok) continue;
+    const payload = (await acctRes.json()) as {
+      securitiesAccount?: {
+        accountNumber?: string;
+        type?: string;
+        currentBalances?: {
+          liquidationValue?: number;
+          cashBalance?: number;
+          availableFunds?: number;
+        };
+        positions?: Array<{
+          instrument?: {
+            symbol?: string;
+            assetType?: string;
+          };
+          longQuantity?: number;
+          shortQuantity?: number;
+          marketValue?: number;
+          averagePrice?: number;
+        }>;
+      };
+    };
+    const sa = payload.securitiesAccount;
+    const bal = sa?.currentBalances;
+    accounts.push({
+      accountNumber: n.accountNumber || sa?.accountNumber || n.hashValue,
+      hashValue: n.hashValue,
+      type: sa?.type,
+      liquidationValue: bal?.liquidationValue,
+      cash: bal?.cashBalance ?? bal?.availableFunds,
+    });
+    for (const p of sa?.positions ?? []) {
+      const qty =
+        Number(p.longQuantity || 0) - Number(p.shortQuantity || 0);
+      const symbol = p.instrument?.symbol;
+      if (!symbol) continue;
+      positions.push({
+        accountHash: n.hashValue,
+        symbol,
+        quantity: qty,
+        marketValue: Number(p.marketValue || 0),
+        price: Number(p.averagePrice || 0),
+        assetType: (p.instrument?.assetType || "EQUITY").toLowerCase(),
+      });
+    }
+  }
+
+  return { accounts, positions };
+}
+
 void openConnectorSecret;

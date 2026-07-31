@@ -1,14 +1,19 @@
 import { getSql } from "@/lib/db";
 import { BROKER_IDS, BROKERS, type BrokerId } from "./brokers/catalog";
+import { BROKER_READ_ONLY_PROMISE } from "./brokers/read-only-policy";
 import { startBrokerOAuth } from "./oauth.server";
 import { schwabOAuthConfigured } from "./oauth/schwab.server";
+import { mcpOAuthConfigured } from "./oauth/mcp-oauth.server";
 import { pullAndIngestBroker } from "./brokers/sync.server";
+import { SIMULATED_CONNECTOR_MODE } from "./simulated-schwab.server";
 
 const DESCRIPTIONS: Record<BrokerId, string> = {
-  schwab: "Direct connection for balances and positions after you approve access at Schwab.",
-  robinhood: "Connect via your Robinhood developer / MCP path when configured.",
-  ibkr: "Connect Interactive Brokers when your MCP or export path is ready.",
-  fidelity: "Upload or drop statement exports when live API is not available.",
+  schwab:
+    "Read-only Schwab Trader API — balances and positions for analysis. Never places orders.",
+  robinhood:
+    "Robinhood MCP OAuth (read-only analysis). We never call trade/order tools.",
+  ibkr: "Interactive Brokers MCP when available — read-only analysis only.",
+  fidelity: "Live API not available yet — connection will open when ready.",
   synthetic: "Labeled sample fund for demos — not a live broker.",
 };
 
@@ -23,10 +28,16 @@ export type ConnectorPublic = {
   lastError: string | null;
   authKind: string;
   accountCount: number;
+  /** True when holdings came from in-app simulated import (not OAuth). */
+  isSimulated: boolean;
+  readOnly: true;
+  readOnlyPromise: string;
 };
 
 async function brokerConfigured(broker: BrokerId): Promise<boolean> {
   if (broker === "schwab") return schwabOAuthConfigured();
+  if (broker === "robinhood") return mcpOAuthConfigured("robinhood");
+  if (broker === "ibkr") return mcpOAuthConfigured("ibkr").catch(() => false);
   if (broker === "synthetic") return true;
   if (BROKERS[broker].authKind === "exports_only") return false;
   return false;
@@ -59,21 +70,27 @@ export async function listConnectors(
 
   const out: ConnectorPublic[] = [];
   for (const id of BROKER_IDS) {
-    if (id === "synthetic") continue; // sample is not a connectable card
+    if (id === "synthetic") continue;
     const def = BROKERS[id];
     const row = byBroker.get(id);
     const oauthConfigured = await brokerConfigured(id);
+    const isSimulated = row?.mode === SIMULATED_CONNECTOR_MODE;
     out.push({
       broker: id,
       label: def.label,
-      description: DESCRIPTIONS[id],
+      description: isSimulated
+        ? "Simulated Schwab holdings for preview — not a live OAuth link. Clear anytime."
+        : DESCRIPTIONS[id],
       status: row?.status ?? "disconnected",
-      mode: row?.mode ?? "exports_only",
+      mode: row?.mode ?? def.authKind,
       oauthConfigured,
       lastSyncAt: row?.last_sync_at ?? null,
       lastError: row?.last_error ?? null,
       authKind: row?.auth_kind ?? def.authKind,
       accountCount: acctBy.get(id) ?? 0,
+      isSimulated,
+      readOnly: true,
+      readOnlyPromise: BROKER_READ_ONLY_PROMISE,
     });
   }
   return out;
@@ -96,6 +113,17 @@ export async function disconnectBroker(args: {
   broker: BrokerId;
 }): Promise<void> {
   const sql = await getSql();
+  // If this was a simulation, wipe simulated accounts too.
+  const modeRows = await sql<{ mode: string }>`
+    select mode from connectors
+    where tenant_id = ${args.tenantId} and broker = ${args.broker}
+    limit 1
+  `;
+  if (modeRows[0]?.mode === SIMULATED_CONNECTOR_MODE && args.broker === "schwab") {
+    const { clearSimulatedSchwab } = await import("./simulated-schwab.server");
+    await clearSimulatedSchwab(args.tenantId);
+    return;
+  }
   const rows = await sql<{ id: string }>`
     select id from connectors
     where tenant_id = ${args.tenantId} and broker = ${args.broker}
@@ -119,16 +147,20 @@ export async function syncBrokers(
 ): Promise<{ synced: number }> {
   const sql = await getSql();
   const rows = broker
-    ? await sql<{ broker: string }>`
-        select broker from connectors
-        where tenant_id = ${tenantId} and status = ${"connected"} and broker = ${broker}
+    ? await sql<{ broker: string; mode: string }>`
+        select broker, mode from connectors
+        where tenant_id = ${tenantId}
+          and status in (${"connected"}, ${"error"})
+          and broker = ${broker}
       `
-    : await sql<{ broker: string }>`
-        select broker from connectors
-        where tenant_id = ${tenantId} and status = ${"connected"}
+    : await sql<{ broker: string; mode: string }>`
+        select broker, mode from connectors
+        where tenant_id = ${tenantId}
+          and status in (${"connected"}, ${"error"})
       `;
   let synced = 0;
   for (const r of rows) {
+    if (r.mode === SIMULATED_CONNECTOR_MODE) continue; // no live API to call
     try {
       await pullAndIngestBroker({
         tenantId,
@@ -136,7 +168,7 @@ export async function syncBrokers(
       });
       synced += 1;
     } catch {
-      /* leave last_error for later */
+      /* last_error set in pullAndIngestBroker */
     }
   }
   return { synced };

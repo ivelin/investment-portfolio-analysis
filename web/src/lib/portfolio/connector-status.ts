@@ -16,7 +16,14 @@ export type ConnectCta =
   | "how_to_connect"
   | "connect"
   | "refresh_disconnect"
+  | "retry_sync"
+  | "reconnect"
   | "none";
+
+/** Tokens are still stored; user should retry sync, not re-OAuth. */
+export function isLinkedStatus(status: ConnectorDbStatus): boolean {
+  return status === "connected" || status === "error";
+}
 
 export function classifyConnectorUiStatus(args: {
   status: ConnectorDbStatus;
@@ -34,6 +41,7 @@ export function primaryConnectCta(args: {
   oauthConfigured: boolean;
 }): ConnectCta {
   if (args.status === "connected") return "refresh_disconnect";
+  if (args.status === "error") return "retry_sync";
   if (!args.oauthConfigured) return "how_to_connect";
   return "connect";
 }

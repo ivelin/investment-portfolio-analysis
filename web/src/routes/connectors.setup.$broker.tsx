@@ -17,6 +17,7 @@ import {
   saveSchwabAppCredentialsFn,
   type ConnectorStatus,
 } from "@/lib/portfolio/connector-queries";
+import { navigateToBrokerOAuth } from "@/lib/portfolio/oauth-navigate";
 import {
   BROKERS,
   type BrokerId,
@@ -85,9 +86,6 @@ function BrokerSetupPage() {
       <AppShell>
         <main className="mx-auto max-w-xl px-4 py-10 sm:px-6">
           <h1 className="text-2xl font-semibold">Unknown broker</h1>
-          <p className="mt-2 text-sm text-fg-muted">
-            That connection isn’t supported.
-          </p>
           <Link
             to="/connectors"
             className="mt-6 inline-flex items-center gap-2 text-sm font-medium text-fg underline-offset-4 hover:underline"
@@ -112,7 +110,7 @@ function BrokerSetupPage() {
         data: { broker, origin: window.location.origin },
       });
       if (result.kind === "oauth_redirect") {
-        window.location.href = result.authorizeUrl;
+        navigateToBrokerOAuth(result.authorizeUrl);
         return;
       }
       setError(
@@ -147,7 +145,7 @@ function BrokerSetupPage() {
         data: { broker: "schwab", origin: window.location.origin },
       });
       if (result.kind === "oauth_redirect") {
-        window.location.href = result.authorizeUrl;
+        navigateToBrokerOAuth(result.authorizeUrl);
         return;
       }
       setError(result.message);
@@ -189,8 +187,10 @@ function BrokerSetupPage() {
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-fg-muted">
           {broker === "schwab"
-            ? "Finish these steps once, then approve access on Schwab. You’ll return here automatically when it’s done."
-            : "Approve access on the broker’s site. You’ll return here when it’s done — balances stay in this workspace only."}
+            ? "Register a Schwab developer app, then approve access. Live balances import into this workspace only."
+            : broker === "robinhood"
+              ? "Connect via Robinhood’s Agentic Trading MCP OAuth. Use a top-level browser tab (not the embedded preview frame)."
+              : "Approve access at the broker when live API/MCP is available for this host."}
         </p>
 
         {ready ? (
@@ -224,10 +224,22 @@ function BrokerSetupPage() {
             onSaveAndConnect={() => void saveSchwabAndConnect()}
             onConnectOnly={() => void startOAuth()}
           />
-        ) : (
-          <RemoteBrokerSetup
-            broker={broker}
+        ) : broker === "robinhood" ? (
+          <McpBrokerSetup
             label={def.label}
+            docsUrl={def.docsUrl}
+            callbackUrl={callbackUrl}
+            copied={copied}
+            onCopy={() => void copyCallback()}
+            ready={ready}
+            busy={busy}
+            onConnect={() => void startOAuth()}
+            note="Robinhood only completes Agentic OAuth for approved agent hosts. If you land on robinhood.com/oauth/error after Allow, that is a Robinhood platform limit for generic web redirect URIs — not a missing Client ID in this app."
+          />
+        ) : (
+          <McpBrokerSetup
+            label={def.label}
+            docsUrl={def.docsUrl}
             callbackUrl={callbackUrl}
             copied={copied}
             onCopy={() => void copyCallback()}
@@ -238,9 +250,8 @@ function BrokerSetupPage() {
         )}
 
         <p className="mt-8 text-xs leading-relaxed text-fg-subtle">
-          We never ask for your brokerage password in this app. You approve
-          access on the broker’s site. Linked data stays private to this
-          workspace.
+          We never ask for your brokerage password in this app. Linked data
+          stays private to this workspace.
         </p>
       </main>
     </AppShell>
@@ -264,8 +275,8 @@ function SchwabSetup(props: {
     <div className="mt-8 space-y-4">
       <Step n={1} title="Create a Schwab developer app">
         <p>
-          Open the Schwab Developer portal and create an app with read access to
-          accounts and positions.
+          Open the Schwab Developer portal and create an app with Trader API
+          access (accounts & positions).
         </p>
         <a
           href="https://developer.schwab.com/"
@@ -280,8 +291,8 @@ function SchwabSetup(props: {
 
       <Step n={2} title="Register this callback URL">
         <p>
-          Paste this exact callback URL into your Schwab app’s redirect /
-          callback settings:
+          Paste this exact callback into your Schwab app redirect settings. Open
+          this preview in its own tab before connecting.
         </p>
         <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
           <code className="block min-w-0 flex-1 break-all rounded-[var(--radius-sm)] border border-border bg-bg px-3 py-2 font-mono text-[11px] text-fg">
@@ -300,14 +311,13 @@ function SchwabSetup(props: {
 
       <Step n={3} title="Add your app credentials">
         <p>
-          From the Schwab portal, enter the Client ID and Client Secret for that
-          app. They’re stored for this deployment only — never shown again in the
-          UI.
+          Enter the Client ID and Client Secret from the Schwab portal. Stored
+          for this deployment only.
         </p>
         {props.ready ? (
           <p className="mt-2 text-xs text-success">
-            Credentials are already on file. You can replace them below if
-            needed, or continue to Schwab.
+            Credentials are already on file. Replace them below if needed, or
+            continue to Schwab.
           </p>
         ) : null}
         <label className="mt-3 block text-sm">
@@ -336,9 +346,8 @@ function SchwabSetup(props: {
 
       <Step n={4} title="Approve access on Schwab">
         <p>
-          We’ll send you to Schwab to sign in and approve read access. When you
-          finish, Schwab returns you here and we import balances into this
-          workspace only.
+          We’ll send you to Schwab in a top-level window. When you finish, you
+          return here and balances import into this workspace only.
         </p>
       </Step>
 
@@ -381,28 +390,48 @@ function SchwabSetup(props: {
   );
 }
 
-function RemoteBrokerSetup(props: {
-  broker: BrokerId;
+function McpBrokerSetup(props: {
   label: string;
+  docsUrl?: string;
   callbackUrl: string;
   copied: boolean;
   onCopy: () => void;
   ready: boolean;
   busy: boolean;
   onConnect: () => void;
+  note?: string;
 }) {
   return (
     <div className="mt-8 space-y-4">
-      <Step n={1} title={`Have a ${props.label} account ready`}>
-        <p>You’ll sign in with the account you want to analyze.</p>
-      </Step>
-      <Step n={2} title="Approve access">
+      {props.note ? (
+        <div className="rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-3 text-sm leading-relaxed text-fg-muted">
+          {props.note}
+        </div>
+      ) : null}
+      <Step n={1} title="Open this app in its own tab">
         <p>
-          Tap continue. {props.label} will ask you to approve read access for
-          portfolio analysis.
+          Broker OAuth pages refuse to load inside the embedded preview frame.
+          Use the open-in-tab control, then continue.
         </p>
+      </Step>
+      <Step n={2} title={`Authorize ${props.label}`}>
+        <p>
+          We’ll register a public OAuth client (DCR + PKCE) when needed and send
+          you to {props.label} to approve access.
+        </p>
+        {props.docsUrl ? (
+          <a
+            href={props.docsUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-fg underline-offset-4 hover:underline"
+          >
+            Broker docs
+            <ExternalLink className="h-3 w-3" aria-hidden />
+          </a>
+        ) : null}
         <p className="mt-2 text-xs text-fg-subtle">
-          Callback used by this app:{" "}
+          Callback:{" "}
           <button
             type="button"
             onClick={props.onCopy}
@@ -410,12 +439,6 @@ function RemoteBrokerSetup(props: {
           >
             {props.copied ? "Copied!" : props.callbackUrl || "…"}
           </button>
-        </p>
-      </Step>
-      <Step n={3} title="Return here">
-        <p>
-          After approval, you’ll land back on Brokers with your accounts linked
-          to this workspace only.
         </p>
       </Step>
       <button
@@ -431,7 +454,7 @@ function RemoteBrokerSetup(props: {
         )}
         {props.ready
           ? `Continue to ${props.label}`
-          : `${props.label} isn’t ready yet — try again shortly`}
+          : `${props.label} isn’t ready on this host yet`}
       </button>
     </div>
   );

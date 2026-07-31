@@ -1,14 +1,32 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Beaker, Link2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Beaker,
+  Link2,
+  Loader2,
+} from "lucide-react";
 import { AppShell } from "@/components/layout/app-shell";
 import { NlvChart } from "@/components/dashboard/nlv-chart";
 import { PositionsTable } from "@/components/dashboard/positions-table";
 import { StatCard } from "@/components/dashboard/stat-card";
 import { RedirectToSignIn } from "@/lib/auth/gates";
 import { useCurrentUserState } from "@/lib/auth/use-current-user";
-import { getDashboard } from "@/lib/portfolio/queries";
-import type { DashboardPayload } from "@/lib/portfolio/types";
+import {
+  getAccountPortfolioFn,
+  getDashboard,
+} from "@/lib/portfolio/queries";
+import { seedSimulatedSchwabFn } from "@/lib/portfolio/connector-queries";
+import {
+  positionsLookLikeDemo,
+  positionsLookLikeSimulatedSchwab,
+  visibleDashboardAccounts,
+} from "@/lib/portfolio/dashboard-selection";
+import type {
+  DashboardPayload,
+  FundSeriesPoint,
+  PositionRow,
+} from "@/lib/portfolio/types";
 import { formatPct, formatUsd } from "@/lib/utils";
 
 export const Route = createFileRoute("/dashboard")({
@@ -23,6 +41,26 @@ function DashboardPage() {
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(
     null,
   );
+  const [loadedAccountId, setLoadedAccountId] = useState<string | null>(null);
+  const [series, setSeries] = useState<FundSeriesPoint[]>([]);
+  const [positions, setPositions] = useState<PositionRow[]>([]);
+  const [periodReturnPct, setPeriodReturnPct] = useState<number | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+
+  function applyPayload(payload: DashboardPayload) {
+    setData(payload);
+    const initial =
+      payload.selectedAccountId ??
+      payload.accounts.find((a) => !a.isDemo)?.id ??
+      payload.accounts[0]?.id ??
+      null;
+    setSelectedAccountId(initial);
+    setLoadedAccountId(initial);
+    setSeries(payload.series);
+    setPositions(payload.positions);
+    setPeriodReturnPct(payload.workspace.twrrPeriodReturnPct);
+  }
 
   useEffect(() => {
     if (isPending) return;
@@ -36,9 +74,7 @@ function DashboardPage() {
     getDashboard()
       .then((payload) => {
         if (cancelled) return;
-        setData(payload);
-        const live = payload.accounts.find((a) => !a.isDemo);
-        setSelectedAccountId(live?.id ?? payload.accounts[0]?.id ?? null);
+        applyPayload(payload);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -54,29 +90,40 @@ function DashboardPage() {
     };
   }, [user, isPending]);
 
+  useEffect(() => {
+    if (!user || !selectedAccountId) return;
+    if (selectedAccountId === loadedAccountId) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    getAccountPortfolioFn({ data: { accountId: selectedAccountId } })
+      .then((p) => {
+        if (cancelled) return;
+        setSeries(p.series);
+        setPositions(p.positions);
+        setPeriodReturnPct(p.periodReturnPct);
+        setLoadedAccountId(p.accountId);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load account");
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, selectedAccountId, loadedAccountId]);
+
   const selected = useMemo(() => {
     if (!data) return null;
     return (
       data.accounts.find((a) => a.id === selectedAccountId) ??
+      data.accounts.find((a) => !a.isDemo) ??
       data.accounts[0] ??
       null
     );
   }, [data, selectedAccountId]);
-
-  const view = useMemo(() => {
-    if (!data || !selected) return data;
-    if (selected.id === data.accounts[0]?.id) return data;
-    return {
-      ...data,
-      series: data.series,
-      positions: data.positions,
-      workspace: {
-        ...data.workspace,
-        latestNlv: selected.latestNlv,
-        latestAsOf: selected.latestAsOf,
-      },
-    };
-  }, [data, selected]);
 
   const liveAccounts = useMemo(
     () => data?.accounts.filter((a) => !a.isDemo) ?? [],
@@ -87,6 +134,29 @@ function DashboardPage() {
     (s, a) => s + (a.latestNlv ?? 0),
     0,
   );
+
+  const visibleAccounts = useMemo(
+    () => (data ? visibleDashboardAccounts(data.accounts) : []),
+    [data],
+  );
+
+  const posSymbols = positions.map((p) => p.symbol);
+  const showingDemoHoldings = positionsLookLikeDemo(posSymbols);
+  const showingSimSchwab = positionsLookLikeSimulatedSchwab(posSymbols);
+
+  async function loadSimulated() {
+    setSeeding(true);
+    setError(null);
+    try {
+      await seedSimulatedSchwabFn();
+      const payload = await getDashboard();
+      applyPayload(payload);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Could not load simulation");
+    } finally {
+      setSeeding(false);
+    }
+  }
 
   if (isPending) {
     return (
@@ -102,9 +172,12 @@ function DashboardPage() {
     return <RedirectToSignIn />;
   }
 
-  const period = view?.workspace.twrrPeriodReturnPct ?? null;
   const tone =
-    period == null ? "default" : period >= 0 ? "up" : "down";
+    periodReturnPct == null
+      ? "default"
+      : periodReturnPct >= 0
+        ? "up"
+        : "down";
 
   return (
     <AppShell>
@@ -119,11 +192,9 @@ function DashboardPage() {
             </h1>
             <p className="mt-1 text-sm text-fg-muted">
               {data
-                ? `${data.workspace.accountCount} account${data.workspace.accountCount === 1 ? "" : "s"}${
-                    hasLive
-                      ? ` · ${liveAccounts.length} linked`
-                      : " · sample data"
-                  }`
+                ? hasLive
+                  ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
+                  : `${data.workspace.accountCount} account · sample data`
                 : "Setting up your workspace…"}
             </p>
           </div>
@@ -136,7 +207,7 @@ function DashboardPage() {
             ) : null}
             {hasLive ? (
               <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-success/40 bg-success/10 px-3 py-1 text-xs font-medium text-success">
-                Brokers linked
+                {showingSimSchwab ? "Simulated Schwab" : "Brokers linked"}
               </span>
             ) : null}
             <Link
@@ -158,15 +229,55 @@ function DashboardPage() {
 
         {!hasLive ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-4 text-sm text-fg-muted sm:px-5">
-            You’re viewing a sample portfolio so you can explore the product.{" "}
+            <p>
+              You’re viewing a <strong className="text-fg">sample</strong>{" "}
+              portfolio (VOO / AAPL style holdings). Connect a broker or load
+              simulated Schwab data to replace it.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={seeding}
+                onClick={() => void loadSimulated()}
+                className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius-sm)] bg-primary px-3 text-xs font-medium text-primary-fg"
+              >
+                {seeding ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Beaker className="h-3.5 w-3.5" />
+                )}
+                Load simulated Schwab
+              </button>
+              <Link
+                to="/connectors"
+                className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-bg px-3 text-xs font-medium text-fg"
+              >
+                <Link2 className="h-3.5 w-3.5" />
+                Connect real broker
+              </Link>
+            </div>
+          </div>
+        ) : showingSimSchwab ? (
+          <div className="mt-6 rounded-[var(--radius-lg)] border border-success/25 bg-success/5 px-4 py-3 text-sm text-fg-muted">
+            Dashboard is on <strong className="text-fg">simulated Schwab</strong>{" "}
+            data (SGOV / TSLA / IBIT…), not the sample fund. Sample chips are
+            hidden.{" "}
             <Link
               to="/connectors"
               className="font-medium text-fg underline-offset-4 hover:underline"
             >
-              Connect your brokerage accounts
-            </Link>{" "}
-            to replace it with your own balances and holdings. Your data stays
-            private to this workspace.
+              Manage on Brokers
+            </Link>
+          </div>
+        ) : null}
+
+        {hasLive && showingDemoHoldings ? (
+          <div className="mt-4 flex items-start gap-2 rounded-[var(--radius-md)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+              Positions still look like sample holdings while live accounts
+              exist — try another account chip or re-sync.
+            </span>
           </div>
         ) : null}
 
@@ -177,39 +288,45 @@ function DashboardPage() {
               loading && !data
                 ? "…"
                 : formatUsd(
-                    hasLive
-                      ? totalLiveNlv
-                      : (view?.workspace.latestNlv ?? null),
+                    hasLive ? totalLiveNlv : (selected?.latestNlv ?? null),
                   )
             }
             hint={
               hasLive
                 ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
-                : view?.workspace.latestAsOf
-                  ? `As of ${view.workspace.latestAsOf}`
+                : selected?.latestAsOf
+                  ? `As of ${selected.latestAsOf}`
                   : "Awaiting series"
             }
           />
           <StatCard
             label="Selected account"
             value={
-              loading && !view
-                ? "…"
-                : formatUsd(selected?.latestNlv ?? view?.workspace.latestNlv)
+              loading && !data ? "…" : formatUsd(selected?.latestNlv ?? null)
             }
-            hint={selected?.displayName ?? "Primary"}
+            hint={
+              selected
+                ? `${selected.displayName}${selected.accountMask ? ` ${selected.accountMask}` : ""}`
+                : "Primary"
+            }
           />
           <StatCard
             label="Period return"
-            value={loading && !view ? "…" : formatPct(period)}
+            value={
+              loading || detailLoading ? "…" : formatPct(periodReturnPct)
+            }
             tone={tone as "default" | "up" | "down"}
-            hint="From first to last available day on the selected account"
+            hint={
+              series.length < 2
+                ? "Need at least two daily points (sync over time)"
+                : "From first to last available day on the selected account"
+            }
           />
         </div>
 
-        {data && data.accounts.length > 1 ? (
+        {visibleAccounts.length > 1 ? (
           <div className="mt-6 flex flex-wrap gap-2">
-            {data.accounts.map((a) => {
+            {visibleAccounts.map((a) => {
               const active = a.id === selected?.id;
               return (
                 <button
@@ -224,9 +341,7 @@ function DashboardPage() {
                 >
                   {a.displayName}
                   {a.accountMask ? ` ${a.accountMask}` : ""}
-                  <span className="ml-1 text-fg-subtle">
-                    · {a.broker}
-                  </span>
+                  <span className="ml-1 text-fg-subtle">· {a.broker}</span>
                 </button>
               );
             })}
@@ -234,20 +349,53 @@ function DashboardPage() {
         ) : null}
 
         <section className="mt-8 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
-          <div className="mb-4">
-            <h2 className="text-sm font-semibold">Account value over time</h2>
-            <p className="text-xs text-fg-muted">
-              {selected?.displayName ?? "Primary account"}
-              {selected?.accountMask ? ` · ${selected.accountMask}` : ""}
-              {selected?.isDemo ? " · sample" : ""}
-            </p>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-semibold">Account value over time</h2>
+              <p className="text-xs text-fg-muted">
+                {selected?.displayName ?? "Primary account"}
+                {selected?.accountMask ? ` · ${selected.accountMask}` : ""}
+                {selected?.isDemo ? " · sample" : ""}
+              </p>
+            </div>
+            {detailLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-fg-muted" />
+            ) : null}
           </div>
-          <NlvChart series={view?.series ?? []} />
+          {series.length === 0 && !detailLoading ? (
+            <p className="py-10 text-center text-sm text-fg-muted">
+              No value history yet for this account. Run{" "}
+              <Link
+                to="/connectors"
+                className="font-medium text-fg underline-offset-4 hover:underline"
+              >
+                Sync
+              </Link>{" "}
+              on Brokers to pull the latest balances.
+            </p>
+          ) : (
+            <NlvChart series={series} />
+          )}
         </section>
 
         <section className="mt-6 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
-          <h2 className="mb-4 text-sm font-semibold">Positions</h2>
-          <PositionsTable positions={view?.positions ?? []} />
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">Positions</h2>
+            {detailLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-fg-muted" />
+            ) : (
+              <span className="text-xs text-fg-subtle">
+                {positions.length} holding{positions.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </div>
+          {positions.length === 0 && !detailLoading ? (
+            <p className="py-6 text-center text-sm text-fg-muted">
+              No positions stored for this account yet.
+            </p>
+          ) : (
+            <PositionsTable positions={positions} />
+          )}
         </section>
 
         <p className="mt-8 text-xs text-fg-subtle">
