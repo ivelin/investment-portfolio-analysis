@@ -4,10 +4,12 @@
  * Sign-in paths:
  *   1. **Direct social** (Vercel / any host with GOOGLE_* / TWITTER_*):
  *      Better Auth socialProviders → Google / X.
- *   2. **Grok broker** (sandbox preview, Grok CLI, non-Vercel without social env):
+ *   2. **Grok broker** (sandbox preview, Grok CLI, Grok *.grok.me publish):
  *      genericOAuth → auth.grok.me. Preview client accepts
  *      `https://*.grok-sandbox.com/api/auth/oauth2/callback/*`.
- *      Deployed grok.me uses injected GROK_AUTH_* client.
+ *      Deployed grok.me uses injected GROK_AUTH_* client — platform must
+ *      register exact redirect URIs for
+ *      `/api/auth/oauth2/callback/{google,twitter}` on the app origin.
  *
  * Email/password stays off. NEVER import from client code.
  */
@@ -30,6 +32,7 @@ import {
   PREVIEW_CLIENT_SECRET,
 } from "./preview";
 import {
+  appOAuthCallbackUrl,
   fixOAuthAuthorizeUrl,
   originFromAuthBaseURL,
 } from "./oauth-redirect";
@@ -75,10 +78,6 @@ const LOCAL_DEV_ORIGINS: string[] = [
   "http://127.0.0.1:8080",
   "http://[::1]:8080",
 ];
-/**
- * Hosts Better Auth may derive baseURL from (Host / x-forwarded-host).
- * Include :port variants — exact match does not strip ports.
- */
 const DYNAMIC_ALLOWED_HOSTS: string[] = [
   ...previewAllowedHosts,
   "localhost",
@@ -112,6 +111,18 @@ const trustedOrigins: string[] = [
     `http://${host}`,
   ]),
 ];
+
+/** Public origin for absolute OAuth callbacks (never includes /api/auth path). */
+function publicAppOrigin(): string | undefined {
+  if (explicitBaseURL) {
+    try {
+      return new URL(explicitBaseURL).origin;
+    } catch {
+      /* fall through */
+    }
+  }
+  return undefined;
+}
 
 const databaseUrl = resolveDatabaseUrl();
 
@@ -157,7 +168,8 @@ function createAuthDatabase():
         return undefined;
       },
       has(t, prop) {
-        if (prop === "connect" || prop === "query" || prop === "end") return true;
+        if (prop === "connect" || prop === "query" || prop === "end")
+          return true;
         if (target.pool) return Reflect.has(target.pool, prop);
         return Reflect.has(poolShape, prop);
       },
@@ -187,7 +199,10 @@ function createAuthDatabase():
     });
   }
 
-  return { dialect: pgliteDialect(() => getPglite()), type: "postgres" as const };
+  return {
+    dialect: pgliteDialect(() => getPglite()),
+    type: "postgres" as const,
+  };
 }
 
 const database = createAuthDatabase();
@@ -196,6 +211,8 @@ export const SESSION_TOKEN_COOKIE = "__Host-grok-auth.session_token";
 
 // ── providers: direct social vs Grok broker ────────────────────────────────
 const socialProviders = buildSocialProvidersFromEnv(process.env);
+
+const appOriginForCallbacks = publicAppOrigin();
 
 const grokOAuthPlugin =
   backendMode === "grok_broker" && authConfigured
@@ -208,7 +225,6 @@ const grokOAuthPlugin =
         const issuerBase = grokIssuer.replace(/\/+$/, "");
         return genericOAuth({
           config: SOCIAL_PROVIDERS.map(({ providerId, brokerIdp }) => ({
-            // Use social ids so the same button keys work for both modes.
             providerId,
             clientId: grokClientId as string,
             clientSecret: grokClientSecret as string,
@@ -216,16 +232,28 @@ const grokOAuthPlugin =
             tokenUrl: `${issuerBase}/api/auth/oauth2/token`,
             userInfoUrl: `${issuerBase}/api/auth/oauth2/userinfo`,
             scopes: ["openid", "profile", "email"],
-            authorizationUrlParams: { idp: brokerIdp, prompt: "login" },
+            // Explicit absolute callback when public origin known (publish).
+            // Platform GROK_AUTH client must register these exact URIs.
+            ...(appOriginForCallbacks
+              ? {
+                  redirectURI: appOAuthCallbackUrl(
+                    appOriginForCallbacks,
+                    providerId,
+                  ),
+                }
+              : {}),
+            authorizationUrlParams: {
+              idp: brokerIdp,
+              prompt: "login",
+            },
           })),
         });
       })()
     : null;
 
 /**
- * After sign-in/oauth2 (and social), rewrite relative redirect_uri on the
- * authorize URL. Empty dynamic baseURL produced `/oauth2/callback/…` which
- * auth.grok.me rejects as Invalid redirect URI.
+ * After sign-in/oauth2 (and social), rewrite authorize URL:
+ * absolute redirect_uri + broker idp + prompt.
  */
 const absoluteOAuthRedirectPlugin = {
   id: "absolute-oauth-redirect-uri",
@@ -248,9 +276,15 @@ const absoluteOAuthRedirectPlugin = {
             | null;
           if (!returned || typeof returned !== "object") return;
           if (typeof returned.url !== "string") return;
-          const origin = originFromAuthBaseURL(ctx.context.baseURL);
+          const origin =
+            originFromAuthBaseURL(ctx.context.baseURL) ||
+            appOriginForCallbacks ||
+            null;
           if (!origin) return;
-          const fixed = fixOAuthAuthorizeUrl(returned.url, origin);
+          const body = ctx.body as { providerId?: string } | undefined;
+          const fixed = fixOAuthAuthorizeUrl(returned.url, origin, {
+            providerId: body?.providerId,
+          });
           if (fixed !== returned.url) {
             returned.url = fixed;
           }
@@ -268,7 +302,6 @@ export const auth = betterAuth({
   database,
   trustedOrigins,
 
-  // Direct Google / X when env is set. Empty when using Grok broker only.
   socialProviders:
     backendMode === "direct_social" ? socialProviders : {},
 
@@ -287,8 +320,6 @@ export const auth = betterAuth({
 
   advanced: {
     useSecureCookies: false,
-    // Trust x-forwarded-host / proto so live-preview + CLI tunnels resolve
-    // absolute callback URLs (required for Grok broker redirect_uri).
     trustedProxyHeaders: true,
     defaultCookieAttributes: { secure: true, sameSite: "lax", path: "/" },
     cookies: {
@@ -326,5 +357,3 @@ export function ensureAuthReady(): Promise<void> {
 export function readSessionToken(): string | null {
   return getCookie(SESSION_TOKEN_COOKIE) ?? null;
 }
-
-export { SOCIAL_PROVIDERS, GROK_PROVIDERS } from "./providers";

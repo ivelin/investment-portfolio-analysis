@@ -43,4 +43,6 @@ export type DashboardPayload = {
   accounts: AccountSummary[];
   series: FundSeriesPoint[];
   positions: PositionRow[];
+  /** Account whose series/positions are currently loaded. */
+  selectedAccountId: string | null;
 };

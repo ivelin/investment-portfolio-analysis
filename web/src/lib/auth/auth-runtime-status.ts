@@ -1,7 +1,9 @@
 import { databaseEnvPresence, hasDatabaseUrl } from "../db-url";
 import { pgliteUsableInThisRuntime } from "../runtime-env";
+import { expectedBrokerRedirectUris } from "./oauth-redirect";
 import {
   hasDirectSocialEnv,
+  hasExplicitGrokClient,
   isGrokBrokerDisabled,
   isVercelRuntime,
   resolveAuthBackendMode,
@@ -30,6 +32,11 @@ export type AuthRuntimeStatus = {
   databaseEnv: Record<string, boolean>;
   issues: string[];
   hint: string;
+  /**
+   * Exact redirect_uris the Grok auth broker client must allow for this host.
+   * Broker uses exact string match — missing entries → "Invalid redirect URI".
+   */
+  expectedBrokerRedirectUris: string[];
 };
 
 export { pgliteUsableInThisRuntime };
@@ -63,7 +70,6 @@ function authMode(): AuthMode {
   if (backend === "direct_social") return "direct_social";
   if (backend === "unconfigured") return "unconfigured";
   if (backend === "disabled") return "disabled";
-  // backend === grok_broker
   if (process.env.GROK_AUTH_CLIENT_ID && process.env.GROK_AUTH_CLIENT_SECRET) {
     return "deployed_client";
   }
@@ -72,6 +78,32 @@ function authMode(): AuthMode {
 
 function databaseMode(): DatabaseMode {
   return hasDatabaseUrl() ? "neon" : "pglite";
+}
+
+function resolvePublicOrigin(host: string | null, hostKind: HostKind): string | null {
+  const fromEnv =
+    process.env.BETTER_AUTH_URL?.trim() ||
+    process.env.APP_PUBLIC_URL?.trim() ||
+    (process.env.VERCEL_URL?.trim()
+      ? `https://${process.env.VERCEL_URL.trim()}`
+      : null);
+  if (fromEnv) {
+    try {
+      return new URL(fromEnv).origin;
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!host) return null;
+  const proto =
+    hostKind === "local" || host.startsWith("127.") || host.startsWith("localhost")
+      ? "http"
+      : "https";
+  try {
+    return new URL(`${proto}://${host}`).origin;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -94,16 +126,21 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
   const enforcePublishedEnv =
     (hostKind === "published" || isVercelRuntime()) && !pgliteUsable;
 
+  const origin = resolvePublicOrigin(host, hostKind);
+  const expectedRedirects = origin ? expectedBrokerRedirectUris(origin) : [];
+
   const issues: string[] = [];
   if (enforcePublishedEnv) {
-    if (isVercelRuntime() && (mode === "unconfigured" || mode === "preview_client")) {
+    if (mode === "unconfigured" || mode === "preview_client") {
       issues.push(
-        "Social sign-in needs GOOGLE_CLIENT_ID/SECRET and/or TWITTER_CLIENT_ID/SECRET on Vercel (not auth.grok.me).",
+        "Sign-in needs platform Grok auth (GROK_AUTH_CLIENT_ID/SECRET on *.grok.me) " +
+          "or direct GOOGLE_*/TWITTER_* credentials.",
       );
     }
     if (database === "pglite") {
       issues.push(
-        "No database URL on this deploy. Sign-in needs Postgres (Neon); the sandbox in-memory DB does not work on published serverless hosts.",
+        "No database URL on this deploy. Sign-in needs durable Postgres (DATABASE_URL); " +
+          "the sandbox in-memory DB does not work on published serverless hosts.",
       );
     }
     if (!hasStableSecret) {
@@ -112,6 +149,24 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
   }
 
   const publishLikelyBroken = enforcePublishedEnv && issues.length > 0;
+
+  let hint: string;
+  if (hasDirectSocialEnv()) {
+    hint =
+      "Direct Google/X social + Better Auth on this origin; sessions need DATABASE_URL on published hosts.";
+  } else if (mode === "deployed_client" || hasExplicitGrokClient()) {
+    hint =
+      "Grok broker with platform client (auth.grok.me). Client must allow exact redirect_uris listed in expectedBrokerRedirectUris.";
+  } else if (mode === "preview_client") {
+    hint =
+      "Grok broker preview client (auth.grok.me) for sandbox/CLI; absolute redirect_uri + idp required.";
+  } else if (isGrokBrokerDisabled()) {
+    hint =
+      "Grok broker disabled (AUTH_DISABLE_GROK_BROKER). Set GOOGLE_*/TWITTER_* or re-enable broker.";
+  } else {
+    hint =
+      "Set platform GROK_AUTH_* (*.grok.me publish) or GOOGLE_*/TWITTER_* for direct social.";
+  }
 
   return {
     authEnabled,
@@ -129,12 +184,7 @@ export function getAuthRuntimeStatus(host: string | null): AuthRuntimeStatus {
     pgliteUsable,
     databaseEnv,
     issues,
-    hint: hasDirectSocialEnv()
-      ? "Direct Google/X social + Better Auth on this origin; sessions need DATABASE_URL (Neon) on published hosts."
-      : mode === "preview_client" || mode === "deployed_client"
-        ? "Grok broker (auth.grok.me) for sandbox/CLI; absolute redirect_uri required. Vercel uses GOOGLE_*/TWITTER_* instead."
-        : isGrokBrokerDisabled()
-          ? "Grok broker disabled (AUTH_DISABLE_GROK_BROKER). Set GOOGLE_*/TWITTER_* for direct social."
-          : "Set GOOGLE_*/TWITTER_* for direct social, or use non-Vercel Grok broker path for sandbox/CLI.",
+    hint,
+    expectedBrokerRedirectUris: expectedRedirects,
   };
 }

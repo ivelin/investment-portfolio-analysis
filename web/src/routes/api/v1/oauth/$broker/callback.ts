@@ -73,8 +73,10 @@ export async function oauthCallbackGet({
     if (!bind.ok) {
       const sql = await getSql();
       await sql`
-        insert into audit_events (tenant_id, user_id, action, resource_type, meta)
-        values (
+        insert into audit_events (
+          id, tenant_id, actor_user_id, action, resource_type, meta
+        ) values (
+          ${newId("aud")},
           ${st.tenantId},
           ${sessionUser?.id ?? null},
           ${"connector.oauth_bind_rejected"},
@@ -157,10 +159,15 @@ export async function oauthCallbackGet({
     `;
 
     await sql`
-      insert into audit_events (tenant_id, user_id, action, resource_type, resource_id, meta)
-      values (
-        ${consumed.tenantId}, ${consumed.userId}, ${"connector.oauth_completed"},
-        ${"connector"}, ${connectorId},
+      insert into audit_events (
+        id, tenant_id, actor_user_id, action, resource_type, resource_id, meta
+      ) values (
+        ${newId("aud")},
+        ${consumed.tenantId},
+        ${consumed.userId},
+        ${"connector.oauth_completed"},
+        ${"connector"},
+        ${connectorId},
         ${JSON.stringify(
           auditMeta({
             broker,

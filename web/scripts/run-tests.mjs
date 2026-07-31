@@ -48,6 +48,31 @@ const SUITES = [
     title: "Broker connector setup path",
   },
   {
+    id: "broker-readonly",
+    file: "scripts/test-broker-read-only.mjs",
+    title: "Broker connectors read-only (no orders)",
+  },
+  {
+    id: "broker-sync",
+    file: "scripts/test-broker-sync.mjs",
+    title: "Broker sync pull/ingest + isolation",
+  },
+  {
+    id: "oauth-callback",
+    file: "scripts/test-oauth-callback.mjs",
+    title: "OAuth callback bind edges",
+  },
+  {
+    id: "db-isolation",
+    file: "scripts/test-db-isolation.mjs",
+    title: "Preview DB isolation from publish Neon",
+  },
+  {
+    id: "dashboard-switch",
+    file: "scripts/test-dashboard-live-switch.mjs",
+    title: "Dashboard demo → live Schwab switch",
+  },
+  {
     id: "api",
     file: "tests/api/critical-path.mjs",
     title: "API critical path (summary/health/jobs)",
@@ -85,48 +110,34 @@ if (selected.length === 0) {
 
 console.log(`\nweb test suite — ${selected.length} suite(s)\n`);
 
-const results = [];
 let failed = 0;
-
 for (const suite of selected) {
-  const script = join(root, suite.file);
   process.stdout.write(`→ ${suite.id}: ${suite.title} ... `);
   const started = Date.now();
-  const r = spawnSync(process.execPath, [script], {
+  const r = spawnSync(process.execPath, [join(root, suite.file)], {
     cwd: root,
+    env: { ...process.env, GROK_AGENT: "1" },
     encoding: "utf8",
-    env: {
-      ...process.env,
-      COVERAGE_SCRATCH:
-        process.env.COVERAGE_SCRATCH ||
-        process.env.GOAL_SCRATCH ||
-        join(root, "coverage/scratch"),
-    },
   });
   const ms = Date.now() - started;
-  const ok = r.status === 0;
-  if (!ok) failed += 1;
-  results.push({ id: suite.id, ok, ms, status: r.status });
-  console.log(ok ? `OK (${ms}ms)` : `FAIL (exit ${r.status}, ${ms}ms)`);
-  if (r.stdout?.trim()) {
-    for (const line of r.stdout.trim().split("\n")) {
-      console.log(`  ${line}`);
+  if (r.status === 0) {
+    console.log(`OK (${ms}ms)`);
+    if (r.stdout?.trim()) {
+      for (const line of r.stdout.trim().split("\n")) {
+        console.log(`  ${line}`);
+      }
     }
-  }
-  if (!ok && r.stderr?.trim()) {
-    for (const line of r.stderr.trim().split("\n").slice(0, 40)) {
-      console.error(`  ${line}`);
-    }
+  } else {
+    failed += 1;
+    console.log(`FAIL (${ms}ms)`);
+    if (r.stdout) console.log(r.stdout);
+    if (r.stderr) console.error(r.stderr);
   }
 }
 
 console.log("\n--- summary ---");
-for (const r of results) {
-  console.log(`${r.ok ? "PASS" : "FAIL"}  ${r.id}  ${r.ms}ms`);
+if (failed) {
+  console.error(`${failed} suite(s) failed`);
+  process.exit(1);
 }
-console.log(
-  failed === 0
-    ? `\nAll ${results.length} suite(s) passed.\n`
-    : `\n${failed}/${results.length} suite(s) failed.\n`,
-);
-process.exit(failed === 0 ? 0 : 1);
+console.log(`All ${selected.length} suite(s) passed.\n`);

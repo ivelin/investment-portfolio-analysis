@@ -66,9 +66,7 @@ export const saveSchwabAppCredentialsFn = createServerFn({ method: "POST" })
     }) => data,
   )
   .handler(async ({ data }) => {
-    const { saveSchwabAppCredentials } = await import(
-      "./oauth/schwab.server"
-    );
+    const { saveSchwabAppCredentials } = await import("./oauth/schwab.server");
     const origin = (data.origin || "").replace(/\/$/, "");
     const redirectUri =
       data.redirectUri ||
@@ -78,5 +76,29 @@ export const saveSchwabAppCredentialsFn = createServerFn({ method: "POST" })
       clientSecret: data.clientSecret,
       redirectUri,
     });
+    return { ok: true };
+  });
+
+/** Load simulated Schwab holdings (preview / demo switch testing). */
+export const seedSimulatedSchwabFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { ensurePersonalTenant } = await import("./tenant.server");
+    const { seedSimulatedSchwab } = await import(
+      "./simulated-schwab.server"
+    );
+    const tenant = await ensurePersonalTenant(context.userId);
+    return seedSimulatedSchwab(tenant.id);
+  });
+
+export const clearSimulatedSchwabFn = createServerFn({ method: "POST" })
+  .middleware([authMiddleware])
+  .handler(async ({ context }) => {
+    const { ensurePersonalTenant } = await import("./tenant.server");
+    const { clearSimulatedSchwab } = await import(
+      "./simulated-schwab.server"
+    );
+    const tenant = await ensurePersonalTenant(context.userId);
+    await clearSimulatedSchwab(tenant.id);
     return { ok: true };
   });

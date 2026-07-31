@@ -41,6 +41,7 @@ create table if not exists broker_accounts (
   fund_symbol     text not null,          -- FUND:{broker}:{account_key}
   is_demo         boolean not null default false,
   created_at      timestamptz not null default now(),
+  updated_at      timestamptz not null default now(),
   unique (tenant_id, broker, account_key)
 );
 create index if not exists broker_accounts_tenant_idx on broker_accounts (tenant_id);
@@ -157,13 +158,13 @@ create index if not exists job_runs_tenant_idx on job_runs (tenant_id, created_a
 
 -- Audit log for security-sensitive actions (no payload secrets)
 create table if not exists audit_events (
-  id            bigserial primary key,
-  tenant_id     text,
-  user_id       text,
+  id            text primary key,
+  tenant_id     text not null references tenants (id) on delete cascade,
+  actor_user_id text,
   action        text not null,
   resource_type text,
   resource_id   text,
-  meta          jsonb not null default '{}'::jsonb, -- must be pre-redacted
+  meta          jsonb,
   created_at    timestamptz not null default now()
 );
 create index if not exists audit_events_tenant_idx on audit_events (tenant_id, created_at desc);

@@ -7,6 +7,12 @@ import {
   exchangeSchwabCode,
   schwabOAuthConfigured,
 } from "./oauth/schwab.server";
+import {
+  buildMcpAuthorizeUrl,
+  exchangeMcpCode,
+  mcpOAuthConfigured,
+  discoveryForBroker,
+} from "./oauth/mcp-oauth.server";
 import { sealConnectorSecret } from "./oauth/secrets.server";
 
 export type OAuthStateRow = {
@@ -83,6 +89,33 @@ export async function consumeOAuthState(args: {
   return peeked;
 }
 
+async function ensurePendingConnector(args: {
+  tenantId: string;
+  broker: BrokerId;
+  mode: string;
+  authKind: string;
+  resourceUrl?: string | null;
+}): Promise<void> {
+  const sql = await getSql();
+  const connId = newId("conn");
+  await sql`
+    insert into connectors (
+      id, tenant_id, broker, mode, status, auth_kind, resource_url, mcp_url
+    ) values (
+      ${connId}, ${args.tenantId}, ${args.broker}, ${args.mode},
+      ${"pending_oauth"}, ${args.authKind},
+      ${args.resourceUrl ?? null}, ${args.resourceUrl ?? null}
+    )
+    on conflict (tenant_id, broker) do update set
+      status = ${"pending_oauth"},
+      mode = ${args.mode},
+      auth_kind = ${args.authKind},
+      resource_url = coalesce(${args.resourceUrl ?? null}, connectors.resource_url),
+      mcp_url = coalesce(${args.resourceUrl ?? null}, connectors.mcp_url),
+      updated_at = now()
+  `;
+}
+
 export async function startBrokerOAuth(args: {
   tenantId: string;
   userId: string;
@@ -99,7 +132,8 @@ export async function startBrokerOAuth(args: {
     if (!(await schwabOAuthConfigured())) {
       return {
         kind: "not_configured",
-        message: "Schwab app credentials are not configured yet.",
+        message:
+          "Add your Schwab developer Client ID and secret on the setup page first.",
       };
     }
     const stateId = newId("oauth");
@@ -119,19 +153,62 @@ export async function startBrokerOAuth(args: {
         ${"direct_oauth"}
       )
     `;
-    // Ensure connector row exists as pending
-    const connId = newId("conn");
-    await sql`
-      insert into connectors (id, tenant_id, broker, mode, status, auth_kind)
-      values (
-        ${connId}, ${args.tenantId}, ${args.broker}, ${"direct_oauth"},
-        ${"pending_oauth"}, ${"direct_oauth"}
-      )
-      on conflict (tenant_id, broker) do update set
-        status = ${"pending_oauth"},
-        updated_at = now()
-    `;
+    await ensurePendingConnector({
+      tenantId: args.tenantId,
+      broker: args.broker,
+      mode: "direct_oauth",
+      authKind: "direct_oauth",
+    });
     return { kind: "oauth_redirect", authorizeUrl: built.authorizeUrl };
+  }
+
+  // Robinhood (and future MCP brokers)
+  if (def.authKind === "remote_mcp" && discoveryForBroker(args.broker)) {
+    if (!(await mcpOAuthConfigured(args.broker))) {
+      return {
+        kind: "not_configured",
+        message: `${def.label} MCP OAuth is not available yet.`,
+      };
+    }
+    try {
+      const stateId = newId("oauth");
+      const built = await buildMcpAuthorizeUrl({
+        broker: args.broker,
+        redirectUri,
+        stateId,
+      });
+      const sql = await getSql();
+      const expires = new Date(Date.now() + 10 * 60_000).toISOString();
+      await sql`
+        insert into broker_oauth_states (
+          id, tenant_id, user_id, broker, code_verifier, redirect_uri,
+          expires_at, auth_kind, resource, client_id, token_endpoint,
+          authorization_endpoint, scope
+        ) values (
+          ${stateId}, ${args.tenantId}, ${args.userId}, ${args.broker},
+          ${built.codeVerifier}, ${redirectUri}, ${expires}::timestamptz,
+          ${"remote_mcp"}, ${built.discovery.resource}, ${built.clientId},
+          ${built.discovery.tokenEndpoint}, ${built.discovery.authorizationEndpoint},
+          ${built.scope}
+        )
+      `;
+      await ensurePendingConnector({
+        tenantId: args.tenantId,
+        broker: args.broker,
+        mode: "remote_mcp",
+        authKind: "remote_mcp",
+        resourceUrl: built.discovery.resource,
+      });
+      return { kind: "oauth_redirect", authorizeUrl: built.authorizeUrl };
+    } catch (err) {
+      return {
+        kind: "not_configured",
+        message:
+          err instanceof Error
+            ? err.message
+            : `Could not start ${def.label} connection.`,
+      };
+    }
   }
 
   if (def.authKind === "exports_only") {
@@ -157,6 +234,28 @@ export async function exchangeOAuthCode(args: {
       code: args.code,
       redirectUri: args.state.redirectUri,
       codeVerifier: args.state.codeVerifier,
+    });
+  }
+  if (
+    args.state.authKind === "remote_mcp" ||
+    discoveryForBroker(args.broker)
+  ) {
+    if (
+      !args.state.clientId ||
+      !args.state.tokenEndpoint ||
+      !args.state.codeVerifier
+    ) {
+      throw new Error(`Incomplete OAuth state for ${args.broker}`);
+    }
+    return exchangeMcpCode({
+      broker: args.broker,
+      code: args.code,
+      redirectUri: args.state.redirectUri,
+      codeVerifier: args.state.codeVerifier,
+      clientId: args.state.clientId,
+      tokenEndpoint: args.state.tokenEndpoint,
+      resource: args.state.resource,
+      scope: args.state.scope,
     });
   }
   throw new Error(`Token exchange not implemented for ${args.broker}`);

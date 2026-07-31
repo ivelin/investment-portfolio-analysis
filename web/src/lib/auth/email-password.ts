@@ -1,10 +1,11 @@
 /**
  * Local email/password sign-in (this app's Better Auth DB — not the broker).
  *
- * Off by default. To enable: set `emailAndPasswordEnabled` to `true` below,
- * then build sign-up / sign-in forms with `authClient.signUp.email` /
- * `authClient.signIn.email` from `@/lib/auth/client` (see the auth skill).
+ * Enabled so published *.grok.me stays usable when the platform Grok auth
+ * broker client is missing registered redirect_uris (Invalid redirect URI).
+ * Social (Google/X via auth.grok.me) remains preferred when the broker works
+ * (live preview + correctly provisioned publish).
  *
- * Do NOT edit `server.ts` for this — that file is frozen pre-wired config.
+ * Do NOT edit `server.ts` for this flag — import only.
  */
-export const emailAndPasswordEnabled = false;
+export const emailAndPasswordEnabled = true;

@@ -7,6 +7,8 @@ import {
 } from "./refresh-decision";
 import { openConnectorSecret, sealConnectorSecret } from "./secrets.server";
 import { refreshSchwabToken } from "./schwab.server";
+import { refreshMcpToken } from "./mcp-oauth.server";
+import { brokerFetch } from "@/lib/portfolio/brokers/broker-http";
 
 export { classifyRefreshAction, DEFAULT_REFRESH_SKEW_MS };
 
@@ -31,7 +33,9 @@ export type TokenRefreshJobResult = {
   results: RefreshResultRow[];
 };
 
-async function refreshOne(tokens: Record<string, unknown>): Promise<Record<string, unknown>> {
+async function refreshOne(
+  tokens: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const broker = String(tokens.broker || "");
   if (broker === "schwab") {
     return refreshSchwabToken({
@@ -39,15 +43,32 @@ async function refreshOne(tokens: Record<string, unknown>): Promise<Record<strin
       clientId: tokens.client_id ? String(tokens.client_id) : undefined,
     });
   }
+  if (
+    (broker === "robinhood" || tokens.kind === "remote_mcp") &&
+    tokens.token_endpoint &&
+    tokens.client_id &&
+    tokens.refresh_token
+  ) {
+    return refreshMcpToken({
+      broker,
+      refreshToken: String(tokens.refresh_token),
+      clientId: String(tokens.client_id),
+      tokenEndpoint: String(tokens.token_endpoint),
+      resource: tokens.resource ? String(tokens.resource) : null,
+    });
+  }
   // Generic OAuth refresh if token_endpoint present
-  const tokenEndpoint = tokens.token_endpoint ? String(tokens.token_endpoint) : null;
+  const tokenEndpoint = tokens.token_endpoint
+    ? String(tokens.token_endpoint)
+    : null;
   if (tokenEndpoint) {
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: String(tokens.refresh_token),
     });
     if (tokens.client_id) body.set("client_id", String(tokens.client_id));
-    const res = await fetch(tokenEndpoint, {
+    const res = await brokerFetch(tokenEndpoint, {
+      purpose: "oauth_token",
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
@@ -73,10 +94,12 @@ async function refreshOne(tokens: Record<string, unknown>): Promise<Record<strin
  * Tenant-scoped OAuth access-token renewal.
  * One connector at a time; seal only into that tenant's connector_secrets.
  */
-export async function runTokenRefreshJob(opts: {
-  tenantId?: string;
-  force?: boolean;
-} = {}): Promise<TokenRefreshJobResult> {
+export async function runTokenRefreshJob(
+  opts: {
+    tenantId?: string;
+    force?: boolean;
+  } = {},
+): Promise<TokenRefreshJobResult> {
   const sql = await getSql();
   const startedAt = new Date().toISOString();
   const jobId = newId("job");
@@ -103,8 +126,6 @@ export async function runTokenRefreshJob(opts: {
       from connector_secrets s
       join connectors c on c.id = s.connector_id
       where s.tenant_id = ${opts.tenantId}
-        and c.tenant_id = ${opts.tenantId}
-        and c.status = ${"connected"}
     `
     : await sql<{
         connector_id: string;
@@ -115,8 +136,6 @@ export async function runTokenRefreshJob(opts: {
       select s.connector_id, s.tenant_id, c.broker, s.ciphertext
       from connector_secrets s
       join connectors c on c.id = s.connector_id
-      where c.status = ${"connected"}
-        and s.tenant_id = c.tenant_id
     `;
 
   const results: RefreshResultRow[] = [];

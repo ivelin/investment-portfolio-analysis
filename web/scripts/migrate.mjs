@@ -2,18 +2,22 @@
 /**
  * Deploy-time database migrator (node-postgres, `pg`).
  *
- * Runs during `npm run build` — on every Vercel deploy — applying pending files
- * in ../migrations to DATABASE_URL (or common Postgres/Neon aliases). Each file
- * is applied in one transaction and recorded in a `_migrations` table, so it
- * runs once and is safe to re-run.
+ * Runs during `npm run build`. Resolves URL from:
+ *   1. DATABASE_URL / Postgres aliases (platform injection)
+ *   2. gitignored src/lib/db-bootstrap.secret.ts (claimable Neon publish fallback)
  *
- * No database URL (local / preview builds) -> skip; the PGLite fallback applies
- * the same files at startup instead (see src/lib/db.ts).
+ * No URL → skip; PGLite applies the same files at preview startup.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import pg from "pg";
+
+const require = createRequire(import.meta.url);
+const fs = require("node:fs");
+
+const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function resolveDatabaseUrl() {
   for (const key of [
@@ -26,6 +30,14 @@ function resolveDatabaseUrl() {
     const value = process.env[key]?.trim();
     if (value) return { key, url: value };
   }
+  const secretPath = join(root, "src/lib/db-bootstrap.secret.ts");
+  if (fs.existsSync(secretPath)) {
+    const text = fs.readFileSync(secretPath, "utf8");
+    const m = text.match(
+      /BOOTSTRAP_DATABASE_URL\s*=\s*\n?\s*["'`]([^"'`]+)["'`]/,
+    );
+    if (m?.[1]?.trim()) return { key: "bootstrap", url: m[1].trim() };
+  }
   return null;
 }
 
@@ -37,25 +49,31 @@ if (!resolved) {
   process.exit(0);
 }
 
-const databaseUrl = resolved.url;
 console.log(`[migrate] using ${resolved.key} (value redacted)`);
-
-const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+const migrationsDir = join(root, "migrations");
 
 async function main() {
-  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  const pool = new pg.Pool({
+    connectionString: resolved.url,
+    max: 1,
+    ssl: { rejectUnauthorized: false },
+  });
   const client = await pool.connect();
   try {
     await client.query(
       "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now())",
     );
     const applied = new Set(
-      (await client.query("SELECT name FROM _migrations")).rows.map((r) => r.name),
+      (await client.query("SELECT name FROM _migrations")).rows.map(
+        (r) => r.name,
+      ),
     );
 
     let files;
     try {
-      files = (await readdir(migrationsDir)).filter((f) => f.endsWith(".sql")).sort();
+      files = (await readdir(migrationsDir))
+        .filter((f) => f.endsWith(".sql"))
+        .sort();
     } catch {
       console.log("[migrate] no migrations/ directory — nothing to do.");
       return;
@@ -67,23 +85,28 @@ async function main() {
       const text = await readFile(join(migrationsDir, name), "utf8");
       try {
         await client.query("BEGIN");
-        // pg's simple-query protocol runs a whole multi-statement file at once.
         await client.query(text);
-        await client.query("INSERT INTO _migrations (name) VALUES ($1)", [name]);
+        await client.query("INSERT INTO _migrations (name) VALUES ($1)", [
+          name,
+        ]);
         await client.query("COMMIT");
       } catch (err) {
         console.error(`[migrate] error applying ${name}`);
         try {
           await client.query("ROLLBACK");
         } catch {
-          // ROLLBACK fails when the connection died — keep the original error.
+          /* keep original */
         }
         throw err;
       }
       console.log(`[migrate] applied ${name}`);
       count += 1;
     }
-    console.log(count ? `[migrate] done — ${count} migration(s) applied.` : "[migrate] up to date.");
+    console.log(
+      count
+        ? `[migrate] done — ${count} migration(s) applied.`
+        : "[migrate] done — already up to date.",
+    );
   } finally {
     client.release();
     await pool.end();
@@ -91,10 +114,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("[migrate] failed:", err?.message || err);
-  // pg errors carry the context needed to debug a bad SQL file.
-  for (const key of ["code", "detail", "hint", "position", "where"]) {
-    if (err?.[key] != null) console.error(`[migrate]   ${key}: ${err[key]}`);
-  }
+  console.error(err);
   process.exit(1);
 });

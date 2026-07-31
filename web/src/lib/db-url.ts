@@ -7,7 +7,10 @@ import { pgliteUsableInThisRuntime } from "./runtime-env";
  * Fallbacks: names some hosts inject for Postgres/Neon marketplace links.
  * Last resort on serverless only: optional gitignored
  * `db-bootstrap.secret.ts` when the platform fails to inject Neon.
- * (Never use the bootstrap in the live preview — keep PGLite there.)
+ *
+ * HARD RULE: live preview / local dev / CI never use the publish Neon
+ * bootstrap URL. Preview always stays on isolated PGLite so prod portfolio
+ * and OAuth tokens are never mixed into test runs.
  *
  * Never log the value — only use it server-side.
  */
@@ -22,7 +25,7 @@ const DB_URL_KEYS = [
 export type DbUrlKey = (typeof DB_URL_KEYS)[number];
 
 /**
- * Optional sandbox-only Neon URL (gitignored). Used only when this process is
+ * Optional publish-only Neon URL (gitignored). Used only when this process is
  * serverless (VERCEL) and the host did not inject DATABASE_URL.
  */
 function bootstrapDatabaseUrl(): string | undefined {
@@ -40,17 +43,45 @@ function bootstrapDatabaseUrl(): string | undefined {
   return undefined;
 }
 
+function normalizeUrl(url: string): string {
+  return url.trim().replace(/\/$/, "");
+}
+
+/** True when `url` is the agent-managed publish bootstrap Neon (prod data). */
+export function isPublishBootstrapUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const bootstrap = bootstrapDatabaseUrl();
+  if (!bootstrap) return false;
+  try {
+    return normalizeUrl(url) === normalizeUrl(bootstrap);
+  } catch {
+    return false;
+  }
+}
+
 export function resolveDatabaseUrl(): string | undefined {
   if (typeof process === "undefined") return undefined;
+
+  // Preview / local / CI agent: isolated PGLite only. Refuse any env URL that
+  // is the publish bootstrap, and do not fall through to bootstrap.
+  if (pgliteUsableInThisRuntime()) {
+    for (const key of DB_URL_KEYS) {
+      const value = process.env[key]?.trim();
+      if (value && isPublishBootstrapUrl(value)) {
+        console.warn(
+          `[db-url] Ignoring ${key}: publish Neon must not be used in preview/dev/CI. Using isolated PGLite.`,
+        );
+      }
+    }
+    return undefined;
+  }
+
+  // Serverless / published host only
   for (const key of DB_URL_KEYS) {
     const value = process.env[key]?.trim();
     if (value) return value;
   }
-  // Preview / local: prefer PGLite. Only fill in Neon on real serverless.
-  if (!pgliteUsableInThisRuntime()) {
-    return bootstrapDatabaseUrl();
-  }
-  return undefined;
+  return bootstrapDatabaseUrl();
 }
 
 /** Which known DB env keys are present (names only — no secret values). */

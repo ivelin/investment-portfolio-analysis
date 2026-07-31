@@ -16,11 +16,17 @@ try {
   const prevGs = process.env.GOOGLE_CLIENT_SECRET;
   const prevT = process.env.TWITTER_CLIENT_ID;
   const prevTs = process.env.TWITTER_CLIENT_SECRET;
+  const prevGrokId = process.env.GROK_AUTH_CLIENT_ID;
+  const prevGrokSecret = process.env.GROK_AUTH_CLIENT_SECRET;
+  const prevDb = process.env.DATABASE_URL;
+  const prevSecret = process.env.BETTER_AUTH_SECRET;
   delete process.env.AUTH_DISABLE_GROK_BROKER;
   delete process.env.GOOGLE_CLIENT_ID;
   delete process.env.GOOGLE_CLIENT_SECRET;
   delete process.env.TWITTER_CLIENT_ID;
   delete process.env.TWITTER_CLIENT_SECRET;
+  delete process.env.GROK_AUTH_CLIENT_ID;
+  delete process.env.GROK_AUTH_CLIENT_SECRET;
 
   const sandbox = getAuthRuntimeStatus("abc.grok-sandbox.com");
   assert.ok(
@@ -48,29 +54,54 @@ try {
   process.env.VERCEL = "1";
   process.env.VERCEL_ENV = "production";
   assert.equal(pgliteUsableInThisRuntime(), false, "VERCEL=1 must disable PGLite");
-  const vercelPublished = getAuthRuntimeStatus("my-app.vercel.app");
-  assert.equal(vercelPublished.hostKind, "published");
-  assert.equal(vercelPublished.pgliteUsable, false);
+
+  // Bare Vercel without platform injection → broken/unconfigured
+  const vercelBare = getAuthRuntimeStatus("my-app.vercel.app");
+  assert.equal(vercelBare.hostKind, "published");
+  assert.equal(vercelBare.pgliteUsable, false);
   assert.ok(
-    vercelPublished.mode === "unconfigured" ||
-      vercelPublished.publishLikelyBroken ||
-      vercelPublished.mode === "direct_social",
-    `vercel mode=${vercelPublished.mode}`,
+    vercelBare.mode === "unconfigured" ||
+      vercelBare.publishLikelyBroken ||
+      vercelBare.mode === "direct_social",
+    `vercel bare mode=${vercelBare.mode}`,
   );
   if (!process.env.GOOGLE_CLIENT_ID && !process.env.TWITTER_CLIENT_ID) {
     assert.ok(
-      vercelPublished.issues.some((i) => /GOOGLE|TWITTER|Social|database/i.test(i)),
-      "vercel without social env should list issues",
+      vercelBare.issues.some((i) =>
+        /GOOGLE|TWITTER|Social|database|GROK_AUTH|platform/i.test(i),
+      ),
+      "vercel without credentials should list issues",
     );
   }
   if (hasDatabaseUrl()) {
-    assert.equal(vercelPublished.database, "neon");
+    assert.equal(vercelBare.database, "neon");
   } else {
     assert.ok(
-      vercelPublished.publishLikelyBroken ||
-        vercelPublished.issues.some((i) => /database/i.test(i)),
+      vercelBare.publishLikelyBroken ||
+        vercelBare.issues.some((i) => /database/i.test(i)),
     );
   }
+
+  // Simulated Grok App publish: Vercel + GROK_AUTH_* + DATABASE_URL + secret
+  process.env.GROK_AUTH_CLIENT_ID = "platform-client";
+  process.env.GROK_AUTH_CLIENT_SECRET = "platform-secret";
+  process.env.DATABASE_URL = "postgres://user:pass@ep-test/neondb";
+  process.env.BETTER_AUTH_SECRET = "stable-session-secret-for-tests";
+  const grokPublish = getAuthRuntimeStatus("investment-portfolio-analysis.grok.me");
+  assert.equal(grokPublish.hostKind, "published");
+  assert.equal(grokPublish.mode, "deployed_client");
+  assert.equal(grokPublish.database, "neon");
+  assert.equal(grokPublish.authEnabled, true);
+  assert.equal(
+    grokPublish.publishLikelyBroken,
+    false,
+    "platform-injected grok.me publish must be healthy",
+  );
+  delete process.env.GROK_AUTH_CLIENT_ID;
+  delete process.env.GROK_AUTH_CLIENT_SECRET;
+  delete process.env.DATABASE_URL;
+  delete process.env.BETTER_AUTH_SECRET;
+
   if (prevVercel === undefined) delete process.env.VERCEL;
   else process.env.VERCEL = prevVercel;
   if (prevVercelEnv === undefined) delete process.env.VERCEL_ENV;
@@ -94,6 +125,14 @@ try {
   else process.env.TWITTER_CLIENT_ID = prevT;
   if (prevTs === undefined) delete process.env.TWITTER_CLIENT_SECRET;
   else process.env.TWITTER_CLIENT_SECRET = prevTs;
+  if (prevGrokId === undefined) delete process.env.GROK_AUTH_CLIENT_ID;
+  else process.env.GROK_AUTH_CLIENT_ID = prevGrokId;
+  if (prevGrokSecret === undefined) delete process.env.GROK_AUTH_CLIENT_SECRET;
+  else process.env.GROK_AUTH_CLIENT_SECRET = prevGrokSecret;
+  if (prevDb === undefined) delete process.env.DATABASE_URL;
+  else process.env.DATABASE_URL = prevDb;
+  if (prevSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+  else process.env.BETTER_AUTH_SECRET = prevSecret;
 
   console.log("OK auth runtime status tests passed");
   process.exitCode = 0;

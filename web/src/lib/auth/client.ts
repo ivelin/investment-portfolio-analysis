@@ -64,16 +64,16 @@ type PopupMessage = {
   error?: string;
 };
 
-function withAbsoluteRedirect(url: string): string {
+function withAbsoluteRedirect(url: string, providerId?: string): string {
   if (typeof window === "undefined") return url;
-  return fixOAuthAuthorizeUrl(url, window.location.origin);
+  return fixOAuthAuthorizeUrl(url, window.location.origin, { providerId });
 }
 
 /**
  * Start sign-in with Google or X (`providerId`: `google` | `twitter`).
  *
  * - Direct social: full-page signIn.social → Google/X authorize.
- * - Grok broker: signIn.oauth2 → auth.grok.me (absolute redirect_uri).
+ * - Grok broker: signIn.oauth2 → auth.grok.me (absolute redirect_uri + idp).
  * - Live-preview iframe: popup to /auth/popup.
  */
 export async function signIn(
@@ -131,12 +131,15 @@ export async function signIn(
   });
   if (!social.error) {
     if (social.data?.url) {
-      window.location.href = withAbsoluteRedirect(social.data.url);
+      window.location.href = withAbsoluteRedirect(
+        social.data.url,
+        providerId,
+      );
     }
     return;
   }
 
-  // Grok broker (sandbox / CLI / non-Vercel)
+  // Grok broker (sandbox / CLI / published *.grok.me)
   const oauth2 = await authClient.signIn.oauth2({
     providerId,
     callbackURL,
@@ -148,7 +151,7 @@ export async function signIn(
     );
   }
   if (oauth2.data?.url) {
-    window.location.href = withAbsoluteRedirect(oauth2.data.url);
+    window.location.href = withAbsoluteRedirect(oauth2.data.url, providerId);
   }
 }
 
@@ -161,44 +164,40 @@ function openSignInPopup(providerId: string): Window | null {
 
 function waitForPopupToken(popup: Window): Promise<string | null> {
   return new Promise((resolve) => {
-    const origin = window.location.origin;
-    let settled = false;
-    let closeTimer: number | undefined;
-    const settle = (token: string | null) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(token);
-    };
-    const onMessage = (event: MessageEvent) => {
-      if (event.origin !== origin) return;
-      const data = event.data as PopupMessage | undefined;
+    const started = Date.now();
+    const timer = window.setInterval(() => {
+      if (popup.closed || Date.now() - started > 120_000) {
+        window.clearInterval(timer);
+        window.removeEventListener("message", onMessage);
+        resolve(null);
+      }
+    }, 400);
+
+    function onMessage(ev: MessageEvent) {
+      if (ev.origin !== window.location.origin) return;
+      const data = ev.data as PopupMessage | null;
       if (!data || data.source !== "grok-auth-popup") return;
-      settle(data.token ?? null);
-    };
-    const pollTimer = window.setInterval(() => {
-      if (!popup.closed) return;
-      window.clearInterval(pollTimer);
-      closeTimer = window.setTimeout(() => settle(null), 400);
-    }, 300);
-    function cleanup() {
-      window.clearInterval(pollTimer);
-      if (closeTimer !== undefined) window.clearTimeout(closeTimer);
+      window.clearInterval(timer);
       window.removeEventListener("message", onMessage);
+      try {
+        popup.close();
+      } catch {
+        /* ignore */
+      }
+      resolve(data.token);
     }
     window.addEventListener("message", onMessage);
   });
 }
 
-export async function signOut(redirectTo = "/"): Promise<void> {
+export async function signOut(): Promise<void> {
+  setBearerToken(null);
   try {
     await authClient.signOut();
-  } finally {
-    setBearerToken(null);
+  } catch {
+    /* ignore */
   }
-  window.location.href = redirectTo;
-}
-
-export function formatSignInError(_err: unknown): string {
-  return "Sign-in didn’t work. Please try again.";
+  if (typeof window !== "undefined") {
+    window.location.href = "/";
+  }
 }
