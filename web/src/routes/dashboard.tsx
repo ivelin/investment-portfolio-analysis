@@ -19,10 +19,10 @@ import {
 import { seedSimulatedSchwabFn } from "@/lib/portfolio/connector-queries";
 import {
   positionsLookLikeDemo,
-  positionsLookLikeSimulatedSchwab,
   visibleDashboardAccounts,
 } from "@/lib/portfolio/dashboard-selection";
 import type {
+  DashboardDataMode,
   DashboardPayload,
   FundSeriesPoint,
   PositionRow,
@@ -32,6 +32,12 @@ import { formatPct, formatUsd } from "@/lib/utils";
 export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
 });
+
+function modeBadge(mode: DashboardDataMode): string {
+  if (mode === "live") return "Live brokers";
+  if (mode === "simulated") return "Simulated Schwab";
+  return "Sample portfolio";
+}
 
 function DashboardPage() {
   const { user, isPending } = useCurrentUserState();
@@ -52,6 +58,7 @@ function DashboardPage() {
     setData(payload);
     const initial =
       payload.selectedAccountId ??
+      payload.accounts.find((a) => !a.isDemo && !a.isSimulated)?.id ??
       payload.accounts.find((a) => !a.isDemo)?.id ??
       payload.accounts[0]?.id ??
       null;
@@ -119,18 +126,32 @@ function DashboardPage() {
     if (!data) return null;
     return (
       data.accounts.find((a) => a.id === selectedAccountId) ??
+      data.accounts.find((a) => !a.isDemo && !a.isSimulated) ??
       data.accounts.find((a) => !a.isDemo) ??
       data.accounts[0] ??
       null
     );
   }, [data, selectedAccountId]);
 
+  const dataMode: DashboardDataMode = data?.dataMode ?? "sample";
+  const isLive = dataMode === "live";
+  const isSimulated = dataMode === "simulated";
+  const isSample = dataMode === "sample";
+
   const liveAccounts = useMemo(
-    () => data?.accounts.filter((a) => !a.isDemo) ?? [],
+    () => data?.accounts.filter((a) => !a.isDemo && !a.isSimulated) ?? [],
     [data],
   );
-  const hasLive = liveAccounts.length > 0;
-  const totalLiveNlv = liveAccounts.reduce(
+  const simAccounts = useMemo(
+    () => data?.accounts.filter((a) => !a.isDemo && a.isSimulated) ?? [],
+    [data],
+  );
+  const valueAccounts = isLive
+    ? liveAccounts
+    : isSimulated
+      ? simAccounts
+      : [];
+  const totalValueNlv = valueAccounts.reduce(
     (s, a) => s + (a.latestNlv ?? 0),
     0,
   );
@@ -141,8 +162,9 @@ function DashboardPage() {
   );
 
   const posSymbols = positions.map((p) => p.symbol);
-  const showingDemoHoldings = positionsLookLikeDemo(posSymbols);
-  const showingSimSchwab = positionsLookLikeSimulatedSchwab(posSymbols);
+  // Only warn about demo holdings when we claim to be on live data.
+  const showingDemoHoldings =
+    isLive && positionsLookLikeDemo(posSymbols);
 
   async function loadSimulated() {
     setSeeding(true);
@@ -192,22 +214,30 @@ function DashboardPage() {
             </h1>
             <p className="mt-1 text-sm text-fg-muted">
               {data
-                ? hasLive
+                ? isLive
                   ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
-                  : `${data.workspace.accountCount} account · sample data`
+                  : isSimulated
+                    ? `${simAccounts.length} simulated account${simAccounts.length === 1 ? "" : "s"}`
+                    : `${data.workspace.accountCount} account · sample data`
                 : "Setting up your workspace…"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {data?.workspace.isDemo && !hasLive ? (
+            {isSample ? (
               <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-bg-subtle px-3 py-1 text-xs font-medium text-fg-muted">
                 <Beaker className="h-3.5 w-3.5" aria-hidden />
                 Sample portfolio
               </span>
             ) : null}
-            {hasLive ? (
-              <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-success/40 bg-success/10 px-3 py-1 text-xs font-medium text-success">
-                {showingSimSchwab ? "Simulated Schwab" : "Brokers linked"}
+            {isLive || isSimulated ? (
+              <span
+                className={
+                  isLive
+                    ? "inline-flex items-center gap-1.5 self-start rounded-full border border-success/40 bg-success/10 px-3 py-1 text-xs font-medium text-success"
+                    : "inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-bg-subtle px-3 py-1 text-xs font-medium text-fg-muted"
+                }
+              >
+                {modeBadge(dataMode)}
               </span>
             ) : null}
             <Link
@@ -215,7 +245,7 @@ function DashboardPage() {
               className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-bg-elevated px-3 text-xs font-medium text-fg transition-colors hover:bg-bg-subtle"
             >
               <Link2 className="h-3.5 w-3.5" aria-hidden />
-              Connect brokers
+              {isLive ? "Manage brokers" : "Connect brokers"}
             </Link>
           </div>
         </div>
@@ -227,7 +257,8 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {!hasLive ? (
+        {/* Sample only: offer sim or real connect. Never show when live. */}
+        {isSample ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-4 text-sm text-fg-muted sm:px-5">
             <p>
               You’re viewing a <strong className="text-fg">sample</strong>{" "}
@@ -257,11 +288,28 @@ function DashboardPage() {
               </Link>
             </div>
           </div>
-        ) : showingSimSchwab ? (
+        ) : null}
+
+        {/* Simulated only — never when live broker data is primary */}
+        {isSimulated ? (
+          <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-3 text-sm text-fg-muted">
+            Dashboard is on{" "}
+            <strong className="text-fg">simulated Schwab</strong> import (not a
+            live OAuth link). Sample chips are hidden.{" "}
+            <Link
+              to="/connectors"
+              className="font-medium text-fg underline-offset-4 hover:underline"
+            >
+              Connect live broker or clear simulation
+            </Link>
+          </div>
+        ) : null}
+
+        {/* Live: quiet confirmation, no dummy/sim language */}
+        {isLive ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-success/25 bg-success/5 px-4 py-3 text-sm text-fg-muted">
-            Dashboard is on <strong className="text-fg">simulated Schwab</strong>{" "}
-            data (SGOV / TSLA / IBIT…), not the sample fund. Sample chips are
-            hidden.{" "}
+            Showing <strong className="text-fg">live broker</strong> balances and
+            holdings. Sample and simulated data are not used in totals.{" "}
             <Link
               to="/connectors"
               className="font-medium text-fg underline-offset-4 hover:underline"
@@ -271,7 +319,7 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {hasLive && showingDemoHoldings ? (
+        {showingDemoHoldings ? (
           <div className="mt-4 flex items-start gap-2 rounded-[var(--radius-md)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
@@ -283,20 +331,24 @@ function DashboardPage() {
 
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
           <StatCard
-            label={hasLive ? "Total value" : "Net liquidation"}
+            label={isSample ? "Net liquidation" : "Total value"}
             value={
               loading && !data
                 ? "…"
                 : formatUsd(
-                    hasLive ? totalLiveNlv : (selected?.latestNlv ?? null),
+                    isSample
+                      ? (selected?.latestNlv ?? null)
+                      : totalValueNlv,
                   )
             }
             hint={
-              hasLive
+              isLive
                 ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
-                : selected?.latestAsOf
-                  ? `As of ${selected.latestAsOf}`
-                  : "Awaiting series"
+                : isSimulated
+                  ? `${simAccounts.length} simulated account${simAccounts.length === 1 ? "" : "s"}`
+                  : selected?.latestAsOf
+                    ? `As of ${selected.latestAsOf}`
+                    : "Awaiting series"
             }
           />
           <StatCard
@@ -356,6 +408,7 @@ function DashboardPage() {
                 {selected?.displayName ?? "Primary account"}
                 {selected?.accountMask ? ` · ${selected.accountMask}` : ""}
                 {selected?.isDemo ? " · sample" : ""}
+                {selected?.isSimulated ? " · simulated" : ""}
               </p>
             </div>
             {detailLoading ? (
