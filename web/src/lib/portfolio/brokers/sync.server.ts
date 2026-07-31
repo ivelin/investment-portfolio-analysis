@@ -252,6 +252,10 @@ async function syncSchwab(tenantId: string): Promise<void> {
   const access = String(tokens.access_token || "");
   if (!access) throw new Error("Schwab re-authorization required");
 
+  // Live data wins: drop any leftover simulated rows so UI never mixes sources.
+  const { clearSimulatedSchwab } = await import("../simulated-schwab.server");
+  await clearSimulatedSchwab(tenantId).catch(() => undefined);
+
   const portfolio = await fetchSchwabPortfolio(access);
   for (const acct of portfolio.accounts) {
     const externalKey = acct.hashValue || acct.accountNumber;
@@ -317,6 +321,10 @@ export async function pullAndIngestBroker(args: {
         last_sync_at = now(),
         last_error = null,
         status = ${"connected"},
+        mode = CASE
+          WHEN mode = ${"simulated"} THEN ${"direct_oauth"}
+          ELSE mode
+        END,
         updated_at = now()
       where tenant_id = ${args.tenantId} and broker = ${args.broker}
     `;
