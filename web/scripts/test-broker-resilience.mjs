@@ -437,10 +437,12 @@ try {
 
   // daily return / TWRR chain — null in → null out
   {
-    assert.equal(finance.dailyReturnFromNlv(100, 110), 0.1);
+    const dr = finance.dailyReturnFromNlv(100, 110);
+    assert.ok(dr != null && Math.abs(dr - 0.1) < 1e-12);
     assert.equal(finance.dailyReturnFromNlv(null, 110), null);
     assert.equal(finance.dailyReturnFromNlv(0, 110), null);
-    assert.equal(finance.nextTwrrIndex(100, 0.1), 110);
+    const tw = finance.nextTwrrIndex(100, 0.1);
+    assert.ok(tw != null && Math.abs(tw - 110) < 1e-9);
     assert.equal(finance.nextTwrrIndex(null, 0.1), null);
     assert.equal(finance.nextTwrrIndex(100, null), 100);
   }
