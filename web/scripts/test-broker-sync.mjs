@@ -180,8 +180,10 @@ try {
     select status, last_error from connectors
     where tenant_id = ${tenantA.id} and broker = ${"schwab"}
   `;
-  assert.equal(afterErr[0].status, "error");
+  // 401 → needs_reauth; last-known holdings retained (not wiped)
+  assert.equal(afterErr[0].status, "needs_reauth");
   assert.ok(afterErr[0].last_error);
+  assert.equal(isReauthErrorMessage(afterErr[0].last_error), true);
 
   // No connector for this tenant → fail closed
   await assert.rejects(

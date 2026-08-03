@@ -74,13 +74,17 @@ export async function listConnectors(
     const def = BROKERS[id];
     const row = byBroker.get(id);
     const oauthConfigured = await brokerConfigured(id);
-    const isSimulated = row?.mode === SIMULATED_CONNECTOR_MODE;
+    const isSimulated =
+      row?.mode === SIMULATED_CONNECTOR_MODE || row?.mode === "mcp_snapshot";
     out.push({
       broker: id,
       label: def.label,
-      description: isSimulated
-        ? "Simulated Schwab holdings for preview — not a live OAuth link. Clear anytime."
-        : DESCRIPTIONS[id],
+      description:
+        row?.mode === "mcp_snapshot"
+          ? "Live holdings imported from your Schwab MCP connector (read-only). Preview only."
+          : row?.mode === SIMULATED_CONNECTOR_MODE
+            ? "Simulated Schwab holdings for preview — not a live OAuth link. Clear anytime."
+            : DESCRIPTIONS[id],
       status: row?.status ?? "disconnected",
       mode: row?.mode ?? def.authKind,
       oauthConfigured,
@@ -108,20 +112,56 @@ export async function connectBroker(args: {
   return startBrokerOAuth(args);
 }
 
+async function clearLiveSchwabAccounts(tenantId: string): Promise<void> {
+  const sql = await getSql();
+  const accts = await sql<{ id: string }>`
+    select id from broker_accounts
+    where tenant_id = ${tenantId} and broker = ${"schwab"} and is_demo = false
+  `;
+  for (const a of accts) {
+    await sql`delete from gt_account_positions where tenant_id = ${tenantId} and account_id = ${a.id}`;
+    await sql`delete from fund_daily where tenant_id = ${tenantId} and account_id = ${a.id}`;
+    await sql`delete from gt_fund_equity_snapshots where tenant_id = ${tenantId} and account_id = ${a.id}`;
+  }
+  await sql`
+    delete from broker_accounts
+    where tenant_id = ${tenantId} and broker = ${"schwab"} and is_demo = false
+  `;
+  await sql`
+    delete from connector_secrets
+    where tenant_id = ${tenantId}
+      and connector_id in (
+        select id from connectors
+        where tenant_id = ${tenantId} and broker = ${"schwab"}
+      )
+  `;
+  await sql`
+    delete from connectors
+    where tenant_id = ${tenantId} and broker = ${"schwab"}
+  `;
+}
+
 export async function disconnectBroker(args: {
   tenantId: string;
   broker: BrokerId;
 }): Promise<void> {
   const sql = await getSql();
-  // If this was a simulation, wipe simulated accounts too.
   const modeRows = await sql<{ mode: string }>`
     select mode from connectors
     where tenant_id = ${args.tenantId} and broker = ${args.broker}
     limit 1
   `;
-  if (modeRows[0]?.mode === SIMULATED_CONNECTOR_MODE && args.broker === "schwab") {
-    const { clearSimulatedSchwab } = await import("./simulated-schwab.server");
-    await clearSimulatedSchwab(args.tenantId);
+  if (
+    args.broker === "schwab" &&
+    (modeRows[0]?.mode === SIMULATED_CONNECTOR_MODE ||
+      modeRows[0]?.mode === "mcp_snapshot")
+  ) {
+    if (modeRows[0]?.mode === SIMULATED_CONNECTOR_MODE) {
+      const { clearSimulatedSchwab } = await import("./simulated-schwab.server");
+      await clearSimulatedSchwab(args.tenantId);
+    } else {
+      await clearLiveSchwabAccounts(args.tenantId);
+    }
     return;
   }
   const rows = await sql<{ id: string }>`
@@ -150,17 +190,19 @@ export async function syncBrokers(
     ? await sql<{ broker: string; mode: string }>`
         select broker, mode from connectors
         where tenant_id = ${tenantId}
-          and status in (${"connected"}, ${"error"})
+          and status in (${"connected"}, ${"error"}, ${"needs_reauth"})
           and broker = ${broker}
       `
     : await sql<{ broker: string; mode: string }>`
         select broker, mode from connectors
         where tenant_id = ${tenantId}
-          and status in (${"connected"}, ${"error"})
+          and status in (${"connected"}, ${"error"}, ${"needs_reauth"})
       `;
   let synced = 0;
   for (const r of rows) {
-    if (r.mode === SIMULATED_CONNECTOR_MODE) continue; // no live API to call
+    if (r.mode === SIMULATED_CONNECTOR_MODE || r.mode === "mcp_snapshot") {
+      continue;
+    }
     try {
       await pullAndIngestBroker({
         tenantId,

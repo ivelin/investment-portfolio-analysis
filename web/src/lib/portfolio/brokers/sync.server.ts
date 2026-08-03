@@ -10,8 +10,27 @@ import {
   refreshSchwabToken,
 } from "../oauth/schwab.server";
 import { refreshMcpToken } from "../oauth/mcp-oauth.server";
+import {
+  dailyReturnFromNlv,
+  finiteNumber,
+  nextTwrrIndex,
+} from "../finance-math";
+import { isPersistableNlv } from "./schwab-contract";
 import type { BrokerId } from "./catalog";
 import { assertBrokerConnectorsReadOnly } from "./read-only-policy";
+import {
+  classifySyncFailure,
+  connectorStatusAfterSyncFailure,
+  isReauthErrorMessage,
+  userMessageForSyncFailure,
+} from "./sync-errors";
+
+export {
+  isReauthErrorMessage,
+  classifySyncFailure,
+  connectorStatusAfterSyncFailure,
+  userMessageForSyncFailure,
+} from "./sync-errors";
 
 function isoDate(d = new Date()): string {
   return d.toISOString().slice(0, 10);
@@ -31,13 +50,6 @@ function maskAccount(raw: string): string {
   return "…";
 }
 
-/** True when the user must complete OAuth again (tokens unusable). */
-export function isReauthErrorMessage(msg: string): boolean {
-  return /re-?auth|invalid_grant|token.*(expired|revoked|invalid)|401|unauthorized|not connected|no (access|refresh) token|consent required/i.test(
-    msg,
-  );
-}
-
 async function loadTokens(
   tenantId: string,
   broker: BrokerId,
@@ -52,7 +64,7 @@ async function loadTokens(
     join connector_secrets s on s.connector_id = c.id and s.tenant_id = c.tenant_id
     where c.tenant_id = ${tenantId}
       and c.broker = ${broker}
-      and c.status in (${"connected"}, ${"error"}, ${"pending_oauth"})
+      and c.status in (${"connected"}, ${"error"}, ${"needs_reauth"}, ${"pending_oauth"})
     limit 1
   `;
   const row = rows[0];
@@ -128,6 +140,7 @@ async function upsertAccount(args: {
   currency?: string;
   nlv?: number | null;
   cash?: number | null;
+  dataQuality?: number;
 }): Promise<string> {
   const sql = await getSql();
   const key = accountKeyFromExternal(args.broker, args.externalKey);
@@ -162,14 +175,65 @@ async function upsertAccount(args: {
     `;
   }
 
-  if (args.nlv != null && Number.isFinite(args.nlv)) {
+  // Only write NLV when finite — never invent 0 from missing balances.
+  if (isPersistableNlv(args.nlv)) {
     const asOf = isoDate();
+    const quality =
+      args.dataQuality != null && Number.isFinite(args.dataQuality)
+        ? Math.max(0, Math.min(100, Math.round(args.dataQuality)))
+        : 100;
+
+    const prev = await sql<{
+      liquidation_value: number;
+      twrr_index: number;
+      as_of_date: string;
+    }>`
+      select liquidation_value, twrr_index, as_of_date::text as as_of_date
+      from fund_daily
+      where tenant_id = ${args.tenantId} and fund_symbol = ${fundSymbol}
+      order by as_of_date desc
+      limit 1
+    `;
+    let dailyRet: number | null = null;
+    let twrr = 100;
+    if (prev[0]) {
+      if (prev[0].as_of_date === asOf) {
+        const dayBefore = await sql<{
+          liquidation_value: number;
+          twrr_index: number;
+        }>`
+          select liquidation_value, twrr_index
+          from fund_daily
+          where tenant_id = ${args.tenantId}
+            and fund_symbol = ${fundSymbol}
+            and as_of_date < ${asOf}::date
+          order by as_of_date desc
+          limit 1
+        `;
+        if (dayBefore[0]) {
+          dailyRet = dailyReturnFromNlv(
+            dayBefore[0].liquidation_value,
+            args.nlv,
+          );
+          const next = nextTwrrIndex(dayBefore[0].twrr_index, dailyRet);
+          twrr = next ?? (finiteNumber(dayBefore[0].twrr_index) ?? 100);
+        } else {
+          dailyRet = null;
+          twrr = finiteNumber(prev[0].twrr_index) ?? 100;
+        }
+      } else {
+        dailyRet = dailyReturnFromNlv(prev[0].liquidation_value, args.nlv);
+        const next = nextTwrrIndex(prev[0].twrr_index, dailyRet);
+        twrr = next ?? 100;
+      }
+    }
+
     await sql`
       insert into gt_fund_equity_snapshots (
         tenant_id, account_id, as_of_date, liquidation_value, cash, source, data_quality
       ) values (
         ${args.tenantId}, ${accountId}, ${asOf}::date, ${args.nlv},
-        ${args.cash ?? null}, ${args.broker}, ${100}
+        ${args.cash ?? null}, ${args.broker}, ${quality}
       )
       on conflict (tenant_id, account_id, as_of_date, source) do update set
         liquidation_value = excluded.liquidation_value,
@@ -183,11 +247,13 @@ async function upsertAccount(args: {
         external_cf, daily_return, twrr_index, data_quality
       ) values (
         ${args.tenantId}, ${accountId}, ${fundSymbol}, ${asOf}::date, ${args.nlv},
-        ${0}, ${0}, ${100}, ${100}
+        ${0}, ${dailyRet}, ${twrr}, ${quality}
       )
       on conflict (tenant_id, fund_symbol, as_of_date) do update set
         liquidation_value = excluded.liquidation_value,
         account_id = excluded.account_id,
+        daily_return = excluded.daily_return,
+        twrr_index = excluded.twrr_index,
         data_quality = excluded.data_quality,
         calc_timestamp = now()
     `;
@@ -215,17 +281,20 @@ async function upsertPositions(args: {
     where tenant_id = ${args.tenantId}
       and account_id = ${args.accountId}
       and as_of_date = ${asOf}::date
-      and source in (${args.broker}, ${"live"}, ${"csv_import"})
+      and source in (${args.broker}, ${"live"}, ${"csv_import"}, ${"mcp_live"})
   `;
   for (const p of args.positions) {
-    if (!p.symbol || !Number.isFinite(p.quantity)) continue;
+    const qty = finiteNumber(p.quantity);
+    if (!p.symbol || qty == null || qty === 0) continue;
+    const mv = finiteNumber(p.marketValue ?? null);
+    const price = finiteNumber(p.price ?? null);
     await sql`
       insert into gt_account_positions (
         tenant_id, account_id, as_of_date, symbol, quantity, market_value,
         price, asset_type, currency, source
       ) values (
         ${args.tenantId}, ${args.accountId}, ${asOf}::date, ${p.symbol},
-        ${p.quantity}, ${p.marketValue ?? null}, ${p.price ?? null},
+        ${qty}, ${mv}, ${price},
         ${p.assetType ?? null}, ${"USD"}, ${"live"}
       )
       on conflict (tenant_id, account_id, as_of_date, symbol, source) do update set
@@ -238,7 +307,7 @@ async function upsertPositions(args: {
   }
 }
 
-/** Read-only Schwab portfolio pull — never places orders. */
+/** Read-only Schwab portfolio pull — never places orders; never wipes on failure. */
 async function syncSchwab(tenantId: string): Promise<void> {
   assertBrokerConnectorsReadOnly();
   const loaded = await loadTokens(tenantId, "schwab");
@@ -252,20 +321,26 @@ async function syncSchwab(tenantId: string): Promise<void> {
   const access = String(tokens.access_token || "");
   if (!access) throw new Error("Schwab re-authorization required");
 
-  // Live data wins: drop any leftover simulated rows so UI never mixes sources.
+  const portfolio = await fetchSchwabPortfolio(access);
+
+  // Live data wins: drop leftover simulated rows only after a successful pull.
   const { clearSimulatedSchwab } = await import("../simulated-schwab.server");
   await clearSimulatedSchwab(tenantId).catch(() => undefined);
 
-  const portfolio = await fetchSchwabPortfolio(access);
   for (const acct of portfolio.accounts) {
     const externalKey = acct.hashValue || acct.accountNumber;
+    const nick = acct.nickname != null ? String(acct.nickname).trim() : "";
+    const label = nick
+      ? `Schwab ${nick}`
+      : `Schwab ${acct.type || "Account"}`;
     const accountId = await upsertAccount({
       tenantId,
       broker: "schwab",
       externalKey,
-      displayName: `Schwab ${acct.type || "Account"}`,
+      displayName: label,
       nlv: acct.liquidationValue ?? null,
       cash: acct.cash ?? null,
+      dataQuality: acct.dataQuality,
     });
     const positions = portfolio.positions
       .filter((p) => p.accountHash === acct.hashValue)
@@ -276,14 +351,12 @@ async function syncSchwab(tenantId: string): Promise<void> {
         price: p.price,
         assetType: p.assetType,
       }));
-    if (positions.length) {
-      await upsertPositions({
-        tenantId,
-        accountId,
-        broker: "schwab",
-        positions,
-      });
-    }
+    await upsertPositions({
+      tenantId,
+      accountId,
+      broker: "schwab",
+      positions,
+    });
   }
 }
 
@@ -291,7 +364,6 @@ async function syncRobinhood(tenantId: string): Promise<void> {
   assertBrokerConnectorsReadOnly();
   const loaded = await loadTokens(tenantId, "robinhood");
   if (!loaded) throw new Error("Robinhood not connected");
-  // Token refresh only — we never call Robinhood MCP trade tools.
   await withFreshTokens({
     tenantId,
     broker: "robinhood",
@@ -303,6 +375,7 @@ async function syncRobinhood(tenantId: string): Promise<void> {
 /**
  * Pull + ingest for a connected broker (tenant-scoped tokens only).
  * **Read-only analysis.** Never places orders or mutates brokerage accounts.
+ * On failure: keeps last-known-good holdings; marks connector for reauth/retry.
  */
 export async function pullAndIngestBroker(args: {
   tenantId: string;
@@ -329,15 +402,18 @@ export async function pullAndIngestBroker(args: {
       where tenant_id = ${args.tenantId} and broker = ${args.broker}
     `;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : "Sync failed";
-    const needsReauth = isReauthErrorMessage(msg);
+    const raw = err instanceof Error ? err.message : "Sync failed";
+    const failure = classifySyncFailure(raw);
+    const status = connectorStatusAfterSyncFailure(failure);
+    const msg = userMessageForSyncFailure(failure, raw);
     await sql`
       update connectors set
         last_error = ${msg.slice(0, 400)},
-        status = ${needsReauth ? "error" : "connected"},
+        status = ${status},
         updated_at = now()
       where tenant_id = ${args.tenantId} and broker = ${args.broker}
     `;
+    // Do NOT delete accounts, positions, or secrets — last-known-good stays.
     throw err;
   }
 }

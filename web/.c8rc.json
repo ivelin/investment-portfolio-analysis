@@ -38,7 +38,9 @@
     "src/lib/utils.ts",
     "src/routeTree.gen.ts",
     "src/routes/*.tsx",
-    "src/routes/api/auth/**"
+    "src/routes/api/auth/**",
+    "src/lib/portfolio/mcp-schwab-import.server.ts",
+    "src/lib/portfolio/preview-schwab-share.server.ts"
   ],
   "reporter": [
     "text",

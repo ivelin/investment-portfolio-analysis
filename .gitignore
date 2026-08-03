@@ -47,3 +47,6 @@ __pycache__/
 .ruff_cache/
 *.pyc
 web/coverage/
+**/db-bootstrap.secret.ts
+**/db-bootstrap.meta.json
+*.secret.*
