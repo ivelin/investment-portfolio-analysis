@@ -20,3 +20,8 @@ node_modules/.vite-test/
 coverage/
 .coverage-scratch/
 .env.local
+
+# Agent publish bootstrap metadata/secrets — never commit
+src/lib/db-bootstrap.secret.ts
+src/lib/db-bootstrap.meta.json
+*.secret.*

@@ -21,6 +21,7 @@ import {
   positionsLookLikeDemo,
   visibleDashboardAccounts,
 } from "@/lib/portfolio/dashboard-selection";
+import { sumKnownNlvs } from "@/lib/portfolio/finance-math";
 import type {
   AccountSummary,
   DashboardDataMode,
@@ -157,10 +158,9 @@ function DashboardPage() {
     : isSimulated
       ? simAccounts
       : [];
-  const totalValueNlv = valueAccounts.reduce(
-    (s, a) => s + (a.latestNlv ?? 0),
-    0,
-  );
+  const totalValueAgg = sumKnownNlvs(valueAccounts.map((a) => a.latestNlv));
+  const totalValueNlv = totalValueAgg.total ?? 0;
+  const totalValueComplete = totalValueAgg.complete;
 
   const visibleAccounts = useMemo(
     () => (data ? visibleDashboardAccounts(data.accounts) : []),
@@ -168,9 +168,16 @@ function DashboardPage() {
   );
 
   const selectedSharePct = useMemo(() => {
-    if (!selected?.latestNlv || !(totalValueNlv > 0) || isSample) return null;
+    if (
+      !selected?.latestNlv ||
+      !(totalValueNlv > 0) ||
+      isSample ||
+      !totalValueComplete
+    ) {
+      return null;
+    }
     return (selected.latestNlv / totalValueNlv) * 100;
-  }, [selected, totalValueNlv, isSample]);
+  }, [selected, totalValueNlv, isSample, totalValueComplete]);
 
   const posSymbols = positions.map((p) => p.symbol);
   const showingDemoHoldings = isLive && positionsLookLikeDemo(posSymbols);
@@ -265,6 +272,33 @@ function DashboardPage() {
           <div className="mt-6 flex items-start gap-2 rounded-[var(--radius-md)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
             <span>{error}</span>
+          </div>
+        ) : null}
+
+        {data?.dataHealth?.showStaleBanner && data.dataHealth.message ? (
+          <div className="mt-6 flex flex-col gap-2 rounded-[var(--radius-md)] border border-warning/35 bg-warning/10 px-4 py-3 text-sm text-fg sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden />
+              <span>{data.dataHealth.message}</span>
+            </div>
+            {data.dataHealth.cta === "reconnect" || data.dataHealth.cta === "retry_sync" || data.dataHealth.cta === "connect" ? (
+              <Link
+                to="/connectors"
+                className="inline-flex h-8 shrink-0 items-center rounded-[var(--radius-sm)] border border-border bg-bg-elevated px-3 text-xs font-medium text-fg"
+              >
+                {data.dataHealth.cta === "reconnect"
+                  ? "Reconnect broker"
+                  : data.dataHealth.cta === "connect"
+                    ? "Connect broker"
+                    : "Retry sync"}
+              </Link>
+            ) : null}
+          </div>
+        ) : null}
+
+        {!data?.workspace.latestNlvComplete && isLive ? (
+          <div className="mt-4 rounded-[var(--radius-md)] border border-border bg-bg-subtle px-4 py-2 text-xs text-fg-muted">
+            Portfolio total is partial — some accounts have no known liquidation value. Missing balances are not treated as zero.
           </div>
         ) : null}
 

@@ -6,6 +6,13 @@ import {
   resolveDashboardDataMode,
   workspaceIsDemoOnly,
 } from "./dashboard-selection";
+import {
+  finiteNumber,
+  periodReturnPct,
+  positionWeights,
+  sumKnownNlvs,
+} from "./finance-math";
+import { buildDataHealthSummary } from "./data-health";
 import type {
   AccountSummary,
   DashboardDataMode,
@@ -25,19 +32,6 @@ const DEMO_SYMBOLS = [
 
 function isoDate(d: Date): string {
   return d.toISOString().slice(0, 10);
-}
-
-function periodReturnPct(series: FundSeriesPoint[]): number | null {
-  if (series.length < 2) return null;
-  const firstNlv = series[0].liquidationValue;
-  const lastNlv = series[series.length - 1].liquidationValue;
-  if (!(firstNlv > 0) || !Number.isFinite(lastNlv)) return null;
-  const firstIdx = series[0].twrrIndex;
-  const lastIdx = series[series.length - 1].twrrIndex;
-  if (firstIdx > 0 && lastIdx > 0 && Math.abs(lastIdx - firstIdx) > 1e-9) {
-    return (lastIdx / firstIdx - 1) * 100;
-  }
-  return (lastNlv / firstNlv - 1) * 100;
 }
 
 /** Seed a labeled synthetic demo fund for a brand-new tenant. */
@@ -125,6 +119,7 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
     currency: string;
     latest_nlv: number | null;
     latest_as_of: string | null;
+    latest_quality: number | null;
   }>`
     select
       a.id,
@@ -148,7 +143,14 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
         where s.tenant_id = a.tenant_id and s.account_id = a.id
         order by s.as_of_date desc
         limit 1
-      ) as latest_as_of
+      ) as latest_as_of,
+      (
+        select s.data_quality
+        from gt_fund_equity_snapshots s
+        where s.tenant_id = a.tenant_id and s.account_id = a.id
+        order by s.as_of_date desc
+        limit 1
+      ) as latest_quality
     from broker_accounts a
     where a.tenant_id = ${tenantId}
     order by a.is_demo asc,
@@ -176,8 +178,9 @@ export async function listAccounts(tenantId: string): Promise<AccountSummary[]> 
       displayName: r.display_name,
     }),
     currency: r.currency,
-    latestNlv: r.latest_nlv == null ? null : Number(r.latest_nlv),
+    latestNlv: finiteNumber(r.latest_nlv),
     latestAsOf: r.latest_as_of,
+    dataQuality: finiteNumber(r.latest_quality),
   }));
 }
 
@@ -186,7 +189,7 @@ async function listConnectorModes(tenantId: string): Promise<string[]> {
   const rows = await sql<{ mode: string }>`
     select mode from connectors
     where tenant_id = ${tenantId}
-      and status in (${"connected"}, ${"error"}, ${"pending_oauth"})
+      and status in (${"connected"}, ${"error"}, ${"needs_reauth"}, ${"pending_oauth"})
   `;
   return rows.map((r) => r.mode).filter(Boolean);
 }
@@ -213,18 +216,18 @@ export async function getPositions(
       )
     order by market_value desc nulls last, symbol
   `;
-  const total = rows.reduce((s, r) => s + (Number(r.market_value) || 0), 0);
-  return rows.map((r) => {
-    const mv = r.market_value == null ? null : Number(r.market_value);
-    return {
-      symbol: r.symbol,
-      assetType: r.asset_type,
-      quantity: Number(r.quantity),
-      price: r.price == null ? null : Number(r.price),
-      marketValue: mv,
-      weightPct: mv != null && total > 0 ? (mv / total) * 100 : null,
-    };
-  });
+  const mapped = rows.map((r) => ({
+    symbol: r.symbol,
+    assetType: r.asset_type,
+    quantity: finiteNumber(r.quantity) ?? 0,
+    price: finiteNumber(r.price),
+    marketValue: finiteNumber(r.market_value),
+  }));
+  const weights = positionWeights(mapped);
+  return mapped.map((r, i) => ({
+    ...r,
+    weightPct: weights[i] ?? null,
+  }));
 }
 
 export async function getFundSeries(
@@ -254,19 +257,31 @@ export async function getFundSeries(
       where tenant_id = ${tenantId} and account_id = ${accountId}
       order by as_of_date asc
     `;
-    return snaps.map((r) => ({
-      asOfDate: r.as_of_date,
-      liquidationValue: Number(r.liquidation_value),
-      twrrIndex: 100,
-      dailyReturn: null,
-    }));
+    return snaps
+      .map((r) => {
+        const nlv = finiteNumber(r.liquidation_value);
+        if (nlv == null) return null;
+        return {
+          asOfDate: r.as_of_date,
+          liquidationValue: nlv,
+          twrrIndex: 100,
+          dailyReturn: null as number | null,
+        };
+      })
+      .filter((x): x is FundSeriesPoint => x != null);
   }
-  const mapped = rows.map((r) => ({
-    asOfDate: r.as_of_date,
-    liquidationValue: Number(r.liquidation_value),
-    twrrIndex: Number(r.twrr_index),
-    dailyReturn: r.daily_return == null ? null : Number(r.daily_return),
-  }));
+  const mapped = rows
+    .map((r) => {
+      const nlv = finiteNumber(r.liquidation_value);
+      if (nlv == null) return null;
+      return {
+        asOfDate: r.as_of_date,
+        liquidationValue: nlv,
+        twrrIndex: finiteNumber(r.twrr_index) ?? 100,
+        dailyReturn: finiteNumber(r.daily_return),
+      };
+    })
+    .filter((x): x is FundSeriesPoint => x != null);
   if (limit != null && limit > 0 && mapped.length > limit) {
     return mapped.slice(mapped.length - limit);
   }
@@ -287,6 +302,38 @@ export async function resolveAccountId(
 export async function getConnectorStatuses(tenantId: string) {
   const { listConnectors } = await import("./connectors.server");
   return listConnectors(tenantId);
+}
+
+async function loadBrokerStatus(tenantId: string) {
+  const sql = await getSql();
+  const rows = await sql<{
+    broker: string;
+    status: string;
+    last_error: string | null;
+    last_sync_at: string | null;
+  }>`
+    select broker, status, last_error, last_sync_at::text as last_sync_at
+    from connectors
+    where tenant_id = ${tenantId}
+      and broker <> ${"synthetic"}
+      and status in (${"connected"}, ${"error"}, ${"needs_reauth"})
+    order by
+      case status
+        when ${"needs_reauth"} then 0
+        when ${"error"} then 1
+        else 2
+      end,
+      updated_at desc nulls last
+    limit 1
+  `;
+  const r = rows[0];
+  if (!r) return null;
+  return {
+    broker: r.broker,
+    status: r.status,
+    lastError: r.last_error,
+    lastSyncAt: r.last_sync_at,
+  };
 }
 
 function computeDataMode(
@@ -312,17 +359,19 @@ export async function getWorkspaceSummary(
     const series = await getFundSeries(tenantId, primary.id);
     twrrPeriodReturnPct = periodReturnPct(series);
   }
+  // Never treat missing NLV as zero — partial totals are flagged.
   const sumPool = live.length > 0 ? live : anyLive;
-  const latestNlv =
+  const nlvAgg =
     sumPool.length > 0
-      ? sumPool.reduce((s, a) => s + (a.latestNlv ?? 0), 0)
-      : (primary?.latestNlv ?? null);
+      ? sumKnownNlvs(sumPool.map((a) => a.latestNlv))
+      : sumKnownNlvs(primary ? [primary.latestNlv] : []);
   return {
     id: tenant.id,
     name: tenant.name,
     slug: tenant.slug,
     plan: tenant.plan,
-    latestNlv,
+    latestNlv: nlvAgg.total,
+    latestNlvComplete: nlvAgg.complete,
     latestAsOf: primary?.latestAsOf ?? null,
     twrrPeriodReturnPct,
     isDemo: workspaceIsDemoOnly(accounts),
@@ -368,7 +417,6 @@ export async function getDashboardPayload(
   const accounts = await listAccounts(tenantId);
   const modes = await listConnectorModes(tenantId);
   const dataMode = computeDataMode(accounts, modes);
-  // Prefer linked/live; never default chart/positions to sample when live exists.
   const primary = pickPrimaryAccount(accounts, preferredAccountId);
   const series = primary ? await getFundSeries(tenantId, primary.id) : [];
   const positions = primary ? await getPositions(tenantId, primary.id) : [];
@@ -378,6 +426,18 @@ export async function getDashboardPayload(
     workspace.twrrPeriodReturnPct = periodReturnPct(series);
     workspace.latestAsOf = primary.latestAsOf;
   }
+
+  const brokerStatus = await loadBrokerStatus(tenantId);
+  const hasLive = accounts.some((a) => !a.isDemo);
+  const dataHealth = buildDataHealthSummary({
+    isDemo: workspace.isDemo,
+    hasLiveAccounts: hasLive,
+    latestAsOf: workspace.latestAsOf,
+    connectorStatus: brokerStatus?.status,
+    lastError: brokerStatus?.lastError,
+    nlvComplete: workspace.latestNlvComplete,
+  });
+
   return {
     workspace,
     accounts,
@@ -385,5 +445,7 @@ export async function getDashboardPayload(
     positions,
     selectedAccountId: primary?.id ?? null,
     dataMode,
+    dataHealth,
+    brokerStatus,
   };
 }

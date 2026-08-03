@@ -272,13 +272,17 @@ function ConnectorsPage() {
             const ui = classifyConnectorUiStatus({
               status: c.status,
               oauthConfigured: c.oauthConfigured,
+              lastError: c.lastError,
             });
             const cta = primaryConnectCta({
               status: c.status,
               oauthConfigured: c.oauthConfigured,
+              lastError: c.lastError,
             });
             const linked = isLinkedStatus(c.status);
-            const needsReauth = c.status === "error" && !c.isSimulated;
+            const needsReauth =
+              !c.isSimulated &&
+              (c.status === "needs_reauth" || ui === "reauth_required");
             return (
               <div
                 key={c.broker}

@@ -58,6 +58,11 @@ const SUITES = [
     title: "Broker sync pull/ingest + isolation",
   },
   {
+    id: "broker-resilience",
+    file: "scripts/test-broker-resilience.mjs",
+    title: "Broker OAuth/API resilience + grounded math",
+  },
+  {
     id: "oauth-callback",
     file: "scripts/test-oauth-callback.mjs",
     title: "OAuth callback bind edges",

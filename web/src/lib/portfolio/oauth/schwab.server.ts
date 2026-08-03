@@ -2,6 +2,10 @@ import { createHash, randomBytes } from "node:crypto";
 import { getSql } from "@/lib/db";
 import { brokerFetch } from "@/lib/portfolio/brokers/broker-http";
 import { assertBrokerConnectorsReadOnly } from "@/lib/portfolio/brokers/read-only-policy";
+import {
+  assembleSchwabPortfolio,
+  parseSchwabAccountNumbers,
+} from "@/lib/portfolio/brokers/schwab-contract";
 import { sealConnectorSecret, openConnectorSecret } from "./secrets.server";
 
 const SCHWAB_AUTH = "https://api.schwabapi.com/v1/oauth/authorize";
@@ -176,7 +180,7 @@ export async function refreshSchwabToken(args: {
   const clientId = args.clientId || creds?.clientId;
   const clientSecret = creds?.clientSecret;
   if (!clientId || !clientSecret) {
-    throw new Error("Schwab app credentials not configured");
+    throw new Error("Schwab re-authorization required — app credentials missing");
   }
   const body = new URLSearchParams({
     grant_type: "refresh_token",
@@ -193,13 +197,24 @@ export async function refreshSchwabToken(args: {
     body,
   });
   if (!res.ok) {
-    throw new Error(`Schwab refresh failed (${res.status})`);
+    const text = await res.text().catch(() => "");
+    if (res.status === 400 || res.status === 401) {
+      throw new Error(
+        `Schwab re-authorization required (${res.status}): ${text.slice(0, 120)}`,
+      );
+    }
+    throw new Error(
+      `Schwab refresh failed (${res.status}): ${text.slice(0, 120)}`,
+    );
   }
   const json = (await res.json()) as {
     access_token?: string;
     refresh_token?: string;
     expires_in?: number;
   };
+  if (!json.access_token) {
+    throw new Error("Schwab re-authorization required — empty access_token");
+  }
   const expiresIn = Number(json.expires_in ?? 1800);
   return {
     kind: "direct_oauth",
@@ -212,27 +227,37 @@ export async function refreshSchwabToken(args: {
   };
 }
 
-/**
- * Read-only: accounts + positions for analysis.
- * Never hits /orders or any write path (enforced by brokerFetch).
- */
-export async function fetchSchwabPortfolio(accessToken: string): Promise<{
+export type SchwabPortfolioResult = {
   accounts: Array<{
     accountNumber: string;
     hashValue: string;
     type?: string;
-    liquidationValue?: number;
-    cash?: number;
+    nickname?: string;
+    liquidationValue?: number | null;
+    cash?: number | null;
+    dataQuality: number;
   }>;
   positions: Array<{
     accountHash: string;
     symbol: string;
     quantity: number;
-    marketValue: number;
-    price: number;
+    marketValue: number | null;
+    price: number | null;
     assetType: string;
+    dataQuality: number;
   }>;
-}> {
+  warnings: string[];
+  contractVersion: string;
+};
+
+/**
+ * Read-only: accounts + positions for analysis.
+ * Contract-validated; never hits /orders. On total failure throws so callers
+ * keep last-known-good rows (no wipe).
+ */
+export async function fetchSchwabPortfolio(
+  accessToken: string,
+): Promise<SchwabPortfolioResult> {
   assertBrokerConnectorsReadOnly();
   const headers = {
     authorization: `Bearer ${accessToken}`,
@@ -247,32 +272,46 @@ export async function fetchSchwabPortfolio(accessToken: string): Promise<{
       headers,
     },
   );
+  if (numRes.status === 401 || numRes.status === 403) {
+    throw new Error(
+      `Schwab re-authorization required (accountNumbers ${numRes.status})`,
+    );
+  }
   if (!numRes.ok) {
     throw new Error(`Schwab accountNumbers failed (${numRes.status})`);
   }
-  const numbers = (await numRes.json()) as Array<{
-    accountNumber?: string;
-    hashValue?: string;
-  }>;
 
-  const accounts: Array<{
-    accountNumber: string;
-    hashValue: string;
-    type?: string;
-    liquidationValue?: number;
-    cash?: number;
-  }> = [];
-  const positions: Array<{
-    accountHash: string;
-    symbol: string;
-    quantity: number;
-    marketValue: number;
-    price: number;
-    assetType: string;
+  let numbersRaw: unknown;
+  try {
+    numbersRaw = await numRes.json();
+  } catch {
+    throw new Error(
+      "Schwab accountNumbers unparseable JSON — possible format change",
+    );
+  }
+
+  const numbers = parseSchwabAccountNumbers(numbersRaw);
+  if (numbers.contractMismatch) {
+    throw new Error(
+      `Schwab contract mismatch on accountNumbers: ${numbers.errors.join("; ") || "unexpected shape"}`,
+    );
+  }
+  if (numbers.entries.length === 0) {
+    return {
+      accounts: [],
+      positions: [],
+      warnings: numbers.warnings,
+      contractVersion: "trader.v1.accounts.2024",
+    };
+  }
+
+  const accountPayloads: Array<{
+    identity: { accountNumber: string; hashValue: string };
+    body: unknown;
+    httpOk: boolean;
   }> = [];
 
-  for (const n of numbers) {
-    if (!n.hashValue) continue;
+  for (const n of numbers.entries) {
     const acctRes = await brokerFetch(
       `${SCHWAB_TRADER}/accounts/${encodeURIComponent(n.hashValue)}?fields=positions`,
       {
@@ -281,54 +320,62 @@ export async function fetchSchwabPortfolio(accessToken: string): Promise<{
         headers,
       },
     );
-    if (!acctRes.ok) continue;
-    const payload = (await acctRes.json()) as {
-      securitiesAccount?: {
-        accountNumber?: string;
-        type?: string;
-        currentBalances?: {
-          liquidationValue?: number;
-          cashBalance?: number;
-          availableFunds?: number;
-        };
-        positions?: Array<{
-          instrument?: {
-            symbol?: string;
-            assetType?: string;
-          };
-          longQuantity?: number;
-          shortQuantity?: number;
-          marketValue?: number;
-          averagePrice?: number;
-        }>;
-      };
-    };
-    const sa = payload.securitiesAccount;
-    const bal = sa?.currentBalances;
-    accounts.push({
-      accountNumber: n.accountNumber || sa?.accountNumber || n.hashValue,
-      hashValue: n.hashValue,
-      type: sa?.type,
-      liquidationValue: bal?.liquidationValue,
-      cash: bal?.cashBalance ?? bal?.availableFunds,
-    });
-    for (const p of sa?.positions ?? []) {
-      const qty =
-        Number(p.longQuantity || 0) - Number(p.shortQuantity || 0);
-      const symbol = p.instrument?.symbol;
-      if (!symbol) continue;
-      positions.push({
-        accountHash: n.hashValue,
-        symbol,
-        quantity: qty,
-        marketValue: Number(p.marketValue || 0),
-        price: Number(p.averagePrice || 0),
-        assetType: (p.instrument?.assetType || "EQUITY").toLowerCase(),
-      });
+    if (acctRes.status === 401 || acctRes.status === 403) {
+      throw new Error(
+        `Schwab re-authorization required (account ${acctRes.status})`,
+      );
     }
+    let body: unknown = null;
+    let httpOk = acctRes.ok;
+    if (acctRes.ok) {
+      try {
+        body = await acctRes.json();
+      } catch {
+        httpOk = false;
+        body = null;
+      }
+    }
+    accountPayloads.push({ identity: n, body, httpOk });
   }
 
-  return { accounts, positions };
+  const assembled = assembleSchwabPortfolio({
+    accountNumbersRaw: numbersRaw,
+    accountPayloads,
+  });
+
+  if (assembled.contractMismatch) {
+    throw new Error(
+      `Schwab contract mismatch: ${assembled.errors.join("; ") || "unsupported payload"}`,
+    );
+  }
+  if (!assembled.ok && assembled.errors.length) {
+    throw new Error(
+      assembled.errors.join("; ") || "Schwab portfolio fetch failed",
+    );
+  }
+
+  return {
+    accounts: assembled.accounts.map((a) => ({
+      accountNumber: a.accountNumber,
+      hashValue: a.hashValue,
+      type: a.type,
+      nickname: a.nickname,
+      liquidationValue: a.liquidationValue,
+      cash: a.cash,
+      dataQuality: a.dataQuality,
+    })),
+    positions: assembled.positions.map((p) => ({
+      accountHash: p.accountHash,
+      symbol: p.symbol,
+      quantity: p.quantity,
+      marketValue: p.marketValue,
+      price: p.price,
+      assetType: p.assetType,
+      dataQuality: p.dataQuality,
+    })),
+    warnings: [...numbers.warnings, ...assembled.warnings],
+    contractVersion: assembled.contractVersion,
+  };
 }
 
 void openConnectorSecret;

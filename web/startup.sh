@@ -7,6 +7,11 @@ cd /workspace
 unset DATABASE_URL POSTGRES_URL POSTGRES_PRISMA_URL POSTGRES_URL_NON_POOLING NEON_DATABASE_URL 2>/dev/null || true
 rm -f .env.local 2>/dev/null || true
 
+# Persist preview PGLite on disk so agent tooling + dev server share state.
+# Tests do NOT set this — they use in-memory PGLite.
+export GROK_PREVIEW_PERSIST=1
+export GROK_AGENT="${GROK_AGENT:-1}"
+
 if curl -sf -o /dev/null --max-time 2 http://127.0.0.1:8080/; then
   exit 0
 fi

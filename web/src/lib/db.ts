@@ -239,13 +239,22 @@ async function createPgliteSql(): Promise<Sql> {
 
   globalRef.__pgliteInstance__ ??= (async () => {
     const { PGlite } = await import("@electric-sql/pglite");
-    const pg = new PGlite({
-      parsers: {
-        [OID_INT8]: Number,
-        [OID_DATE]: identity,
-        [OID_INTERVAL]: identity,
-      },
-    });
+    // Disk-backed only when explicitly enabled (live preview). Tests stay in-memory.
+    // Never Neon; path is under gitignored data/.
+    const dataDir =
+      process.env.PGLITE_DATA_DIR?.trim() ||
+      (process.env.GROK_PREVIEW_PERSIST === "1"
+        ? "/workspace/data/pglite"
+        : undefined);
+
+    const parsers = {
+      [OID_INT8]: Number,
+      [OID_DATE]: identity,
+      [OID_INTERVAL]: identity,
+    };
+    const pg = dataDir
+      ? new PGlite(dataDir, { parsers })
+      : new PGlite({ parsers });
     await pg.exec(`
       create table if not exists _migrations (
         name text primary key,

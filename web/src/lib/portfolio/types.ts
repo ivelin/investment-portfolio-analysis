@@ -1,3 +1,5 @@
+import type { DataHealthSummary } from "./data-health";
+
 export type FundSeriesPoint = {
   asOfDate: string;
   liquidationValue: number;
@@ -26,6 +28,8 @@ export type AccountSummary = {
   currency: string;
   latestNlv: number | null;
   latestAsOf: string | null;
+  /** 0–100 when known from last ingest; null for legacy rows. */
+  dataQuality?: number | null;
 };
 
 /**
@@ -40,6 +44,8 @@ export type WorkspaceSummary = {
   slug: string;
   plan: string;
   latestNlv: number | null;
+  /** False when some linked accounts lack NLV — total is partial. */
+  latestNlvComplete: boolean;
   latestAsOf: string | null;
   twrrPeriodReturnPct: number | null;
   isDemo: boolean;
@@ -57,4 +63,13 @@ export type DashboardPayload = {
   selectedAccountId: string | null;
   /** Same as workspace.dataMode — convenience for UI. */
   dataMode: DashboardDataMode;
+  /** Freshness / OAuth health for banners and CTAs. */
+  dataHealth: DataHealthSummary;
+  /** Worst broker connector row (for reauth messaging). */
+  brokerStatus: {
+    broker: string;
+    status: string;
+    lastError: string | null;
+    lastSyncAt: string | null;
+  } | null;
 };
