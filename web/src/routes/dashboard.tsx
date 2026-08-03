@@ -19,10 +19,11 @@ import {
 import { seedSimulatedSchwabFn } from "@/lib/portfolio/connector-queries";
 import {
   positionsLookLikeDemo,
-  positionsLookLikeSimulatedSchwab,
   visibleDashboardAccounts,
 } from "@/lib/portfolio/dashboard-selection";
 import type {
+  AccountSummary,
+  DashboardDataMode,
   DashboardPayload,
   FundSeriesPoint,
   PositionRow,
@@ -32,6 +33,17 @@ import { formatPct, formatUsd } from "@/lib/utils";
 export const Route = createFileRoute("/dashboard")({
   component: DashboardPage,
 });
+
+function modeBadge(mode: DashboardDataMode): string {
+  if (mode === "live") return "Live brokers";
+  if (mode === "simulated") return "Simulated Schwab";
+  return "Sample portfolio";
+}
+
+function accountLabel(a: AccountSummary): string {
+  const mask = a.accountMask ? ` ${a.accountMask}` : "";
+  return `${a.displayName}${mask}`;
+}
 
 function DashboardPage() {
   const { user, isPending } = useCurrentUserState();
@@ -52,6 +64,7 @@ function DashboardPage() {
     setData(payload);
     const initial =
       payload.selectedAccountId ??
+      payload.accounts.find((a) => !a.isDemo && !a.isSimulated)?.id ??
       payload.accounts.find((a) => !a.isDemo)?.id ??
       payload.accounts[0]?.id ??
       null;
@@ -119,18 +132,32 @@ function DashboardPage() {
     if (!data) return null;
     return (
       data.accounts.find((a) => a.id === selectedAccountId) ??
+      data.accounts.find((a) => !a.isDemo && !a.isSimulated) ??
       data.accounts.find((a) => !a.isDemo) ??
       data.accounts[0] ??
       null
     );
   }, [data, selectedAccountId]);
 
+  const dataMode: DashboardDataMode = data?.dataMode ?? "sample";
+  const isLive = dataMode === "live";
+  const isSimulated = dataMode === "simulated";
+  const isSample = dataMode === "sample";
+
   const liveAccounts = useMemo(
-    () => data?.accounts.filter((a) => !a.isDemo) ?? [],
+    () => data?.accounts.filter((a) => !a.isDemo && !a.isSimulated) ?? [],
     [data],
   );
-  const hasLive = liveAccounts.length > 0;
-  const totalLiveNlv = liveAccounts.reduce(
+  const simAccounts = useMemo(
+    () => data?.accounts.filter((a) => !a.isDemo && a.isSimulated) ?? [],
+    [data],
+  );
+  const valueAccounts = isLive
+    ? liveAccounts
+    : isSimulated
+      ? simAccounts
+      : [];
+  const totalValueNlv = valueAccounts.reduce(
     (s, a) => s + (a.latestNlv ?? 0),
     0,
   );
@@ -140,9 +167,13 @@ function DashboardPage() {
     [data],
   );
 
+  const selectedSharePct = useMemo(() => {
+    if (!selected?.latestNlv || !(totalValueNlv > 0) || isSample) return null;
+    return (selected.latestNlv / totalValueNlv) * 100;
+  }, [selected, totalValueNlv, isSample]);
+
   const posSymbols = positions.map((p) => p.symbol);
-  const showingDemoHoldings = positionsLookLikeDemo(posSymbols);
-  const showingSimSchwab = positionsLookLikeSimulatedSchwab(posSymbols);
+  const showingDemoHoldings = isLive && positionsLookLikeDemo(posSymbols);
 
   async function loadSimulated() {
     setSeeding(true);
@@ -179,6 +210,8 @@ function DashboardPage() {
         ? "up"
         : "down";
 
+  const selectedTitle = selected ? accountLabel(selected) : "No account selected";
+
   return (
     <AppShell>
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
@@ -192,22 +225,30 @@ function DashboardPage() {
             </h1>
             <p className="mt-1 text-sm text-fg-muted">
               {data
-                ? hasLive
+                ? isLive
                   ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
-                  : `${data.workspace.accountCount} account · sample data`
+                  : isSimulated
+                    ? `${simAccounts.length} simulated account${simAccounts.length === 1 ? "" : "s"}`
+                    : `${data.workspace.accountCount} account · sample data`
                 : "Setting up your workspace…"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {data?.workspace.isDemo && !hasLive ? (
+            {isSample ? (
               <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-bg-subtle px-3 py-1 text-xs font-medium text-fg-muted">
                 <Beaker className="h-3.5 w-3.5" aria-hidden />
                 Sample portfolio
               </span>
             ) : null}
-            {hasLive ? (
-              <span className="inline-flex items-center gap-1.5 self-start rounded-full border border-success/40 bg-success/10 px-3 py-1 text-xs font-medium text-success">
-                {showingSimSchwab ? "Simulated Schwab" : "Brokers linked"}
+            {isLive || isSimulated ? (
+              <span
+                className={
+                  isLive
+                    ? "inline-flex items-center gap-1.5 self-start rounded-full border border-success/40 bg-success/10 px-3 py-1 text-xs font-medium text-success"
+                    : "inline-flex items-center gap-1.5 self-start rounded-full border border-border bg-bg-subtle px-3 py-1 text-xs font-medium text-fg-muted"
+                }
+              >
+                {modeBadge(dataMode)}
               </span>
             ) : null}
             <Link
@@ -215,7 +256,7 @@ function DashboardPage() {
               className="inline-flex h-9 items-center gap-1.5 rounded-[var(--radius-sm)] border border-border bg-bg-elevated px-3 text-xs font-medium text-fg transition-colors hover:bg-bg-subtle"
             >
               <Link2 className="h-3.5 w-3.5" aria-hidden />
-              Connect brokers
+              {isLive ? "Manage brokers" : "Connect brokers"}
             </Link>
           </div>
         </div>
@@ -227,7 +268,7 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {!hasLive ? (
+        {isSample ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-4 text-sm text-fg-muted sm:px-5">
             <p>
               You’re viewing a <strong className="text-fg">sample</strong>{" "}
@@ -257,11 +298,26 @@ function DashboardPage() {
               </Link>
             </div>
           </div>
-        ) : showingSimSchwab ? (
+        ) : null}
+
+        {isSimulated ? (
+          <div className="mt-6 rounded-[var(--radius-lg)] border border-border bg-bg-elevated px-4 py-3 text-sm text-fg-muted">
+            Dashboard is on{" "}
+            <strong className="text-fg">simulated Schwab</strong> import (not a
+            live OAuth link). Sample chips are hidden.{" "}
+            <Link
+              to="/connectors"
+              className="font-medium text-fg underline-offset-4 hover:underline"
+            >
+              Connect live broker or clear simulation
+            </Link>
+          </div>
+        ) : null}
+
+        {isLive ? (
           <div className="mt-6 rounded-[var(--radius-lg)] border border-success/25 bg-success/5 px-4 py-3 text-sm text-fg-muted">
-            Dashboard is on <strong className="text-fg">simulated Schwab</strong>{" "}
-            data (SGOV / TSLA / IBIT…), not the sample fund. Sample chips are
-            hidden.{" "}
+            Showing <strong className="text-fg">live broker</strong> balances and
+            holdings. Sample and simulated data are not used in totals.{" "}
             <Link
               to="/connectors"
               className="font-medium text-fg underline-offset-4 hover:underline"
@@ -271,7 +327,7 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        {hasLive && showingDemoHoldings ? (
+        {showingDemoHoldings ? (
           <div className="mt-4 flex items-start gap-2 rounded-[var(--radius-md)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-danger">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <span>
@@ -281,33 +337,106 @@ function DashboardPage() {
           </div>
         ) : null}
 
-        <div className="mt-8 grid gap-3 sm:grid-cols-3">
+        {/* Workspace total — sum across accounts, always distinct from selection */}
+        {!isSample && valueAccounts.length > 0 ? (
+          <section className="mt-8 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs font-medium uppercase tracking-[0.12em] text-fg-subtle">
+                  Workspace total
+                </p>
+                <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">
+                  {loading && !data ? "…" : formatUsd(totalValueNlv)}
+                </p>
+                <p className="mt-1 text-sm text-fg-muted">
+                  Sum of {valueAccounts.length} account
+                  {valueAccounts.length === 1 ? "" : "s"}
+                  {isLive ? " (live broker data)" : " (simulated)"}
+                </p>
+              </div>
+            </div>
+            <ul className="mt-5 divide-y divide-border border-t border-border">
+              {valueAccounts.map((a) => {
+                const active = a.id === selected?.id;
+                const share =
+                  a.latestNlv != null && totalValueNlv > 0
+                    ? (a.latestNlv / totalValueNlv) * 100
+                    : null;
+                return (
+                  <li key={a.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedAccountId(a.id)}
+                      className={
+                        active
+                          ? "flex w-full items-center justify-between gap-3 bg-bg-subtle/80 px-1 py-3 text-left sm:px-2"
+                          : "flex w-full items-center justify-between gap-3 px-1 py-3 text-left transition-colors hover:bg-bg-subtle/50 sm:px-2"
+                      }
+                    >
+                      <div className="min-w-0">
+                        <p
+                          className={
+                            active
+                              ? "truncate text-sm font-semibold text-fg"
+                              : "truncate text-sm font-medium text-fg"
+                          }
+                        >
+                          {accountLabel(a)}
+                          {active ? (
+                            <span className="ml-2 text-xs font-medium text-primary">
+                              viewing
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="mt-0.5 text-xs text-fg-subtle">
+                          {a.broker}
+                          {share != null
+                            ? ` · ${share.toFixed(1)}% of total`
+                            : ""}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-semibold tabular-nums text-fg">
+                        {formatUsd(a.latestNlv)}
+                      </p>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
           <StatCard
-            label={hasLive ? "Total value" : "Net liquidation"}
+            label={isSample ? "Net liquidation" : "Workspace total"}
             value={
               loading && !data
                 ? "…"
                 : formatUsd(
-                    hasLive ? totalLiveNlv : (selected?.latestNlv ?? null),
+                    isSample ? (selected?.latestNlv ?? null) : totalValueNlv,
                   )
             }
             hint={
-              hasLive
-                ? `${liveAccounts.length} linked account${liveAccounts.length === 1 ? "" : "s"}`
-                : selected?.latestAsOf
+              isSample
+                ? selected?.latestAsOf
                   ? `As of ${selected.latestAsOf}`
-                  : "Awaiting series"
+                  : "Sample fund"
+                : `${valueAccounts.length} account${valueAccounts.length === 1 ? "" : "s"} combined`
             }
           />
           <StatCard
-            label="Selected account"
+            label="This account"
             value={
               loading && !data ? "…" : formatUsd(selected?.latestNlv ?? null)
             }
             hint={
               selected
-                ? `${selected.displayName}${selected.accountMask ? ` ${selected.accountMask}` : ""}`
-                : "Primary"
+                ? `${accountLabel(selected)}${
+                    selectedSharePct != null
+                      ? ` · ${selectedSharePct.toFixed(0)}% of total`
+                      : ""
+                  }`
+                : "Select an account below"
             }
           />
           <StatCard
@@ -318,44 +447,86 @@ function DashboardPage() {
             tone={tone as "default" | "up" | "down"}
             hint={
               series.length < 2
-                ? "Need at least two daily points (sync over time)"
-                : "From first to last available day on the selected account"
+                ? `For ${selectedTitle} — need ≥2 daily points`
+                : `For ${selectedTitle}`
             }
           />
         </div>
 
-        {visibleAccounts.length > 1 ? (
-          <div className="mt-6 flex flex-wrap gap-2">
-            {visibleAccounts.map((a) => {
-              const active = a.id === selected?.id;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => setSelectedAccountId(a.id)}
-                  className={
-                    active
-                      ? "rounded-full border border-fg/30 bg-bg-subtle px-3 py-1.5 text-xs font-medium text-fg"
-                      : "rounded-full border border-border bg-bg px-3 py-1.5 text-xs font-medium text-fg-muted transition-colors hover:bg-bg-subtle hover:text-fg"
-                  }
-                >
-                  {a.displayName}
-                  {a.accountMask ? ` ${a.accountMask}` : ""}
-                  <span className="ml-1 text-fg-subtle">· {a.broker}</span>
-                </button>
-              );
-            })}
+        {/* Account picker — chips show NLV so selection is obvious */}
+        {visibleAccounts.length > 0 ? (
+          <section className="mt-8">
+            <div className="mb-3 flex items-baseline justify-between gap-2">
+              <h2 className="text-sm font-semibold text-fg">Accounts</h2>
+              <p className="text-xs text-fg-muted">
+                Chart and positions below are for the selected account only
+              </p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+              {visibleAccounts.map((a) => {
+                const active = a.id === selected?.id;
+                return (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => setSelectedAccountId(a.id)}
+                    className={
+                      active
+                        ? "flex min-w-[min(100%,14rem)] flex-col items-start rounded-[var(--radius-md)] border border-fg/35 bg-bg-subtle px-3 py-2.5 text-left"
+                        : "flex min-w-[min(100%,14rem)] flex-col items-start rounded-[var(--radius-md)] border border-border bg-bg px-3 py-2.5 text-left transition-colors hover:bg-bg-subtle"
+                    }
+                  >
+                    <span
+                      className={
+                        active
+                          ? "text-xs font-semibold text-fg"
+                          : "text-xs font-medium text-fg-muted"
+                      }
+                    >
+                      {accountLabel(a)}
+                    </span>
+                    <span className="mt-1 text-sm font-semibold tabular-nums text-fg">
+                      {formatUsd(a.latestNlv)}
+                    </span>
+                    <span className="mt-0.5 text-[11px] text-fg-subtle">
+                      {a.broker}
+                      {active ? " · selected" : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        {/* Sticky-feel context bar for detail sections */}
+        {selected ? (
+          <div className="mt-8 rounded-[var(--radius-md)] border border-primary/25 bg-primary/5 px-4 py-3">
+            <p className="text-xs font-medium uppercase tracking-[0.12em] text-fg-subtle">
+              Viewing account
+            </p>
+            <p className="mt-0.5 text-sm font-semibold text-fg">
+              {selectedTitle}
+              <span className="ml-2 font-normal text-fg-muted">
+                · {formatUsd(selected.latestNlv)}
+                {selected.latestAsOf ? ` · as of ${selected.latestAsOf}` : ""}
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-fg-muted">
+              Chart and positions below apply only to this account — not the
+              workspace total.
+            </p>
           </div>
         ) : null}
 
-        <section className="mt-8 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
+        <section className="mt-4 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
           <div className="mb-4 flex items-center justify-between gap-2">
             <div>
               <h2 className="text-sm font-semibold">Account value over time</h2>
               <p className="text-xs text-fg-muted">
-                {selected?.displayName ?? "Primary account"}
-                {selected?.accountMask ? ` · ${selected.accountMask}` : ""}
+                {selectedTitle}
                 {selected?.isDemo ? " · sample" : ""}
+                {selected?.isSimulated ? " · simulated" : ""}
               </p>
             </div>
             {detailLoading ? (
@@ -364,7 +535,7 @@ function DashboardPage() {
           </div>
           {series.length === 0 && !detailLoading ? (
             <p className="py-10 text-center text-sm text-fg-muted">
-              No value history yet for this account. Run{" "}
+              No value history yet for {selectedTitle}. Run{" "}
               <Link
                 to="/connectors"
                 className="font-medium text-fg underline-offset-4 hover:underline"
@@ -380,7 +551,10 @@ function DashboardPage() {
 
         <section className="mt-6 rounded-[var(--radius-xl)] border border-border bg-bg-elevated p-4 sm:p-6">
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold">Positions</h2>
+            <div>
+              <h2 className="text-sm font-semibold">Positions</h2>
+              <p className="text-xs text-fg-muted">{selectedTitle}</p>
+            </div>
             {detailLoading ? (
               <Loader2 className="h-4 w-4 animate-spin text-fg-muted" />
             ) : (
@@ -391,7 +565,7 @@ function DashboardPage() {
           </div>
           {positions.length === 0 && !detailLoading ? (
             <p className="py-6 text-center text-sm text-fg-muted">
-              No positions stored for this account yet.
+              No positions stored for {selectedTitle} yet.
             </p>
           ) : (
             <PositionsTable positions={positions} />
